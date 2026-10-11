@@ -251,17 +251,15 @@ def suggest_contract_clause(
             body.contract.model_dump()
         )
 
+        # 후보 수 / 최종 근거 수는
+        # ContractClauseAgent 내부 정책을 사용한다.
+
         return (
             clause_agent.suggest_clause(
                 contract=contract,
-
                 message=(
                     body.message
                 ),
-
-                candidate_top_k=12,
-
-                final_top_k=5,
             )
         )
 
