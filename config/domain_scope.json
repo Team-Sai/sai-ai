@@ -1,0 +1,59 @@
+{
+  "001706": {
+    "law_name": "민법",
+    "include_all": false,
+    "article_ranges": [
+      ["103", "105"],
+      ["152", "154"],
+      ["162", "184"],
+      ["376", "379"],
+      ["387", "398"],
+      ["428", "448"],
+      ["460", "486"],
+      ["492", "499"],
+      ["598", "608"]
+    ],
+    "article_numbers": [],
+    "include_supplementary": false
+  },
+
+  "010404": {
+    "law_name": "이자제한법",
+    "include_all": true,
+    "article_ranges": [],
+    "article_numbers": [],
+    "include_supplementary": true
+  },
+
+  "010468": {
+    "law_name": "이자제한법 제2조제1항의 최고이자율에 관한 규정",
+    "include_all": true,
+    "article_ranges": [],
+    "article_numbers": [],
+    "include_supplementary": true
+  },
+
+  "009413": {
+    "law_name": "전자서명법",
+    "include_all": false,
+    "article_ranges": [],
+    "article_numbers": ["2", "3", "14", "18", "19", "20"],
+    "include_supplementary": false
+  },
+
+  "002000": {
+    "law_name": "전자문서 및 전자거래 기본법",
+    "include_all": true,
+    "article_ranges": [],
+    "article_numbers": [],
+    "include_supplementary": false
+  },
+
+  "009290": {
+    "law_name": "민사집행법",
+    "include_all": true,
+    "article_ranges": [],
+    "article_numbers": [],
+    "include_supplementary": false
+  }
+}

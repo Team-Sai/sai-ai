@@ -1,0 +1,286 @@
+from contextlib import (
+    asynccontextmanager,
+)
+
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Request,
+)
+
+from sai_rag.agent.clause_generator import (
+    ClauseGenerator,
+)
+
+from sai_rag.agent.contract_clause_agent import (
+    ContractClauseAgent,
+)
+
+from sai_rag.api.schemas import (
+    ContractClauseSuggestionRequest,
+    ContractReviewRequest,
+)
+
+from sai_rag.generation.factory import (
+    create_review_generator,
+)
+
+from sai_rag.reranking.factory import (
+    create_reranker,
+)
+
+from sai_rag.retrieval.law_retriever import (
+    LawRetriever,
+)
+
+from sai_rag.review.contract_review_service import (
+    ContractReviewService,
+)
+
+
+@asynccontextmanager
+async def lifespan(
+    app: FastAPI,
+):
+    print()
+
+    print(
+        "=" * 60
+    )
+
+    print(
+        "[Startup] "
+        "SAI AI Service 초기화"
+    )
+
+    print(
+        "=" * 60
+    )
+
+    # =========================================
+    # Retrieval
+    # =========================================
+
+    retriever = (
+        LawRetriever(
+            provider="bge-m3"
+        )
+    )
+
+    # =========================================
+    # 기존 계약 검토 Generator
+    # =========================================
+
+    review_generator = (
+        create_review_generator(
+            "openai"
+        )
+    )
+
+    review_service = (
+        ContractReviewService(
+            retriever=retriever,
+            generator=(
+                review_generator
+            ),
+        )
+    )
+
+    # =========================================
+    # Clause Agent Reranker
+    # =========================================
+
+    reranker = (
+        create_reranker(
+            "bge-reranker"
+        )
+    )
+
+    # =========================================
+    # Clause Agent Generator
+    # =========================================
+
+    clause_generator = (
+        ClauseGenerator()
+    )
+
+    clause_agent = (
+        ContractClauseAgent(
+            retriever=retriever,
+            generator=(
+                clause_generator
+            ),
+            reranker=reranker,
+        )
+    )
+
+    app.state.review_service = (
+        review_service
+    )
+
+    app.state.clause_agent = (
+        clause_agent
+    )
+
+    print()
+
+    print(
+        "[Startup] "
+        "Contract Review Service 준비 완료"
+    )
+
+    print(
+        "[Startup] "
+        "Contract Clause Agent 준비 완료"
+    )
+
+    print(
+        "[Startup] "
+        "BGE Reranker 준비 완료"
+    )
+
+    print()
+
+    yield
+
+    print()
+
+    print(
+        "[Shutdown] "
+        "SAI AI Service 종료"
+    )
+
+
+app = FastAPI(
+    title="Saiwonjang AI API",
+
+    description=(
+        "사이원장 차용증 법률 검토 및 "
+        "AI 특약 작성 Agent"
+    ),
+
+    version="0.3.0",
+
+    lifespan=lifespan,
+)
+
+
+@app.get(
+    "/health"
+)
+def health():
+    return {
+        "status": "ok",
+
+        "services": {
+            "contractReview": (
+                "ready"
+            ),
+
+            "clauseAgent": (
+                "ready"
+            ),
+
+            "reranker": (
+                "ready"
+            ),
+        },
+    }
+
+
+@app.post(
+    "/rag/contracts/review"
+)
+def review_contract(
+    request: Request,
+    body: ContractReviewRequest,
+):
+    try:
+        review_service = (
+            request.app.state
+            .review_service
+        )
+
+        contract = (
+            body.model_dump()
+        )
+
+        return (
+            review_service.review(
+                contract=contract,
+                top_k=3,
+                generate=True,
+            )
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    except Exception as exc:
+        print(
+            "[Review Error]",
+            repr(exc),
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "차용증 법률 검토 중 "
+                "오류가 발생했습니다."
+            ),
+        ) from exc
+
+
+@app.post(
+    "/rag/contracts/clause-suggestions"
+)
+def suggest_contract_clause(
+    request: Request,
+    body: ContractClauseSuggestionRequest,
+):
+    try:
+        clause_agent = (
+            request.app.state
+            .clause_agent
+        )
+
+        contract = (
+            body.contract.model_dump()
+        )
+
+        return (
+            clause_agent.suggest_clause(
+                contract=contract,
+
+                message=(
+                    body.message
+                ),
+
+                candidate_top_k=12,
+
+                final_top_k=5,
+            )
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    except Exception as exc:
+        print(
+            "[Clause Agent Error]",
+            repr(exc),
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "AI 특약 생성 중 "
+                "오류가 발생했습니다."
+            ),
+        ) from exc
