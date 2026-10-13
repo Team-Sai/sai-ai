@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from time import perf_counter
 from typing import Any
 
@@ -59,6 +60,10 @@ class ContractClauseAgent:
     DEFAULT_FINAL_TOP_K = 5
 
     GENERATOR_REFERENCE_TOP_K = 3
+
+    SLOT_PATTERN = re.compile(
+        r"\[입력\s*필요\s*:\s*([^\[\]]+)\]"
+    )
 
     def __init__(
         self,
@@ -577,6 +582,18 @@ class ContractClauseAgent:
             or ""
         ).strip()
 
+        final_unresolved_decisions = (
+            self._rebuild_unresolved_decisions(
+                final_clause=final_clause,
+                generated_decisions=(
+                    generated.get(
+                        "unresolvedDecisions",
+                        [],
+                    )
+                ),
+            )
+        )
+
         validator_warnings = (
             self._normalize_warnings(
                 validation.get(
@@ -719,11 +736,11 @@ class ContractClauseAgent:
                 in final_references
             ],
 
+            # Validator가 문장을 수정하면서 Slot을 추가/삭제할 수 있으므로
+            # Generator의 목록을 그대로 사용하지 않고
+            # 최종 조항에 실제 존재하는 Slot 기준으로 다시 구성한다.
             "unresolvedDecisions": (
-                generated.get(
-                    "unresolvedDecisions",
-                    [],
-                )
+                final_unresolved_decisions
             ),
 
             "debug": {
@@ -961,6 +978,131 @@ class ContractClauseAgent:
                 ],
             },
         }
+
+    @classmethod
+    def _extract_final_slots(
+        cls,
+        clause: str,
+    ) -> list[str]:
+        slots: list[str] = []
+
+        for raw_name in (
+            cls.SLOT_PATTERN.findall(
+                clause
+            )
+        ):
+            name = str(
+                raw_name
+            ).strip()
+
+            if (
+                name
+                and name
+                not in slots
+            ):
+                slots.append(
+                    name
+                )
+
+        return slots
+
+    @staticmethod
+    def _normalize_slot_label(
+        value: str,
+    ) -> str:
+        return re.sub(
+            r"[\s·ㆍ,./()_\-]",
+            "",
+            value,
+        ).lower()
+
+    @classmethod
+    def _rebuild_unresolved_decisions(
+        cls,
+        *,
+        final_clause: str,
+        generated_decisions: Any,
+    ) -> list[dict[str, str]]:
+        """
+        Validator가 revisedClause를 반환할 수 있으므로
+        unresolvedDecisions는 반드시 최종 조항의 Slot을 기준으로 만든다.
+
+        Generator가 동일 Slot에 제공했던 reason이 있으면 재사용하고,
+        Validator가 새 Slot을 추가했다면 일반 reason을 부여한다.
+        """
+
+        final_slots = (
+            cls._extract_final_slots(
+                final_clause
+            )
+        )
+
+        generated_reason_by_name: dict[
+            str,
+            str,
+        ] = {}
+
+        if isinstance(
+            generated_decisions,
+            list,
+        ):
+            for item in (
+                generated_decisions
+            ):
+                if not isinstance(
+                    item,
+                    dict,
+                ):
+                    continue
+
+                name = str(
+                    item.get(
+                        "name",
+                        "",
+                    )
+                ).strip()
+
+                reason = str(
+                    item.get(
+                        "reason",
+                        "",
+                    )
+                ).strip()
+
+                if not name:
+                    continue
+
+                generated_reason_by_name[
+                    cls._normalize_slot_label(
+                        name
+                    )
+                ] = reason
+
+        result: list[
+            dict[str, str]
+        ] = []
+
+        for slot in final_slots:
+            reason = (
+                generated_reason_by_name.get(
+                    cls._normalize_slot_label(
+                        slot
+                    )
+                )
+                or (
+                    "최종 계약 조항에서 아직 확정되지 않은 "
+                    "조건이므로 사용자가 값을 결정해야 합니다."
+                )
+            )
+
+            result.append(
+                {
+                    "name": slot,
+                    "reason": reason,
+                }
+            )
+
+        return result
 
     def _merge_vector_candidates(
         self,

@@ -50,6 +50,41 @@ class ClauseGenerator:
         "terms",
     )
 
+    # API/Spring 경계에서 사용하는 이름과
+    # Agent 내부 canonical 이름이 달라도 생성 프롬프트에서
+    # 확정 계약값이 누락되지 않도록 alias를 허용한다.
+    CONTRACT_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+        "principalAmount": (
+            "principalAmount",
+            "principal",
+        ),
+        "interestRate": (
+            "interestRate",
+        ),
+        "lateInterestRate": (
+            "lateInterestRate",
+        ),
+        "startDate": (
+            "startDate",
+        ),
+        "maturityDate": (
+            "maturityDate",
+            "repaymentDate",
+        ),
+        "repaymentDay": (
+            "repaymentDay",
+        ),
+        "repaymentType": (
+            "repaymentType",
+        ),
+        "contractAlias": (
+            "contractAlias",
+        ),
+        "terms": (
+            "terms",
+        ),
+    }
+
     ISSUE_DECISIONS: dict[
         str,
         list[str],
@@ -439,6 +474,16 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
         self,
         contract: dict[str, Any],
     ) -> dict[str, Any]:
+        """
+        Generator에 필요한 계약정보만 canonical field명으로 전달한다.
+
+        API는 현재 principal / repaymentDate를 사용하고,
+        Generator prompt는 principalAmount / maturityDate를 사용한다.
+
+        두 계층의 이름 차이 때문에 원금·만기일이 prompt에서
+        사라지지 않도록 alias를 이 경계에서 흡수한다.
+        """
+
         result: dict[
             str,
             Any,
@@ -447,30 +492,40 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
         for field in (
             self.CONTRACT_FIELDS
         ):
-            value = (
-                contract.get(
-                    field
+            aliases = (
+                self.CONTRACT_FIELD_ALIASES.get(
+                    field,
+                    (field,),
                 )
             )
 
-            if value is None:
-                continue
+            value: Any = None
 
-            if isinstance(
-                value,
-                str,
-            ):
-                stripped = (
-                    value.strip()
+            for alias in aliases:
+                candidate = (
+                    contract.get(
+                        alias
+                    )
                 )
 
-                if not stripped:
+                if candidate is None:
                     continue
 
-                result[
-                    field
-                ] = stripped
+                if isinstance(
+                    candidate,
+                    str,
+                ):
+                    candidate = (
+                        candidate.strip()
+                    )
 
+                    if not candidate:
+                        continue
+
+                value = candidate
+                break
+
+            if value is None:
                 continue
 
             result[

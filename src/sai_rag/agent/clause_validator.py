@@ -150,6 +150,42 @@ class ClauseValidator:
         "COLLATERAL",
     }
 
+    # 단순한 "~했을 때", "~하면" 같은 일반 요청은
+    # 그것만으로 LLM 검증을 수행하지 않는다.
+    #
+    # deterministic rule만으로 의미 보장이 어려운
+    # 적용 범위 / 예외 / 순서 / 반복 조건만
+    # semantic review 대상으로 둔다.
+    SEMANTIC_INTENT_MARKERS = (
+        "경우에만",
+        "때에만",
+        "에 한해서",
+        "한해서",
+        "오직",
+        "제외",
+        "제외하고",
+        "다만",
+        "연속",
+        "원금만",
+        "이자만",
+        "일부만",
+        "전액만",
+        "이후에만",
+        "이전에만",
+        "보다 먼저",
+        "보다 나중",
+    )
+
+    NEGATED_INTENT_KEYWORDS = (
+        "수수료",
+        "위약금",
+        "연체이자",
+        "지연손해금",
+        "담보",
+        "보증",
+        "통지",
+    )
+
     ISSUE_REQUIRED_DECISIONS: dict[
         str,
         list[str],
@@ -319,6 +355,52 @@ class ClauseValidator:
             self._find_risky_generator_warnings(
                 generator_warnings
             )
+        )
+
+        # ======================================
+        # 생성 조항 ↔ 계약 확정값 / 사용자 요청
+        # 실제 내용 일치 여부 검증
+        # ======================================
+
+        contract_clause_conflicts = (
+            self._find_contract_clause_conflicts(
+                contract=contract,
+                clause=original_clause,
+            )
+        )
+
+        user_intent_conflicts = (
+            self._find_user_intent_conflicts(
+                message=message,
+                clause=original_clause,
+            )
+        )
+
+        semantic_intent_review = (
+            self._requires_semantic_intent_review(
+                message=message,
+                conflicts=(
+                    user_intent_conflicts
+                ),
+            )
+        )
+
+        print(
+            "[ClauseValidator] "
+            f"contract_clause_conflicts="
+            f"{contract_clause_conflicts}"
+        )
+
+        print(
+            "[ClauseValidator] "
+            f"user_intent_conflicts="
+            f"{user_intent_conflicts}"
+        )
+
+        print(
+            "[ClauseValidator] "
+            f"semantic_intent_review="
+            f"{semantic_intent_review}"
         )
 
         print(
@@ -589,6 +671,15 @@ class ClauseValidator:
                 original_clause=(
                     original_clause
                 ),
+                contract_clause_conflicts=(
+                    contract_clause_conflicts
+                ),
+                user_intent_conflicts=(
+                    user_intent_conflicts
+                ),
+                semantic_intent_review=(
+                    semantic_intent_review
+                ),
             )
         )
 
@@ -617,13 +708,20 @@ class ClauseValidator:
                     "type": "USER_INTENT",
                     "status": "PASS",
                     "message": (
-                        "분류된 계약 쟁점 범위 안에서 "
-                        "조항이 생성되었습니다."
+                        "사용자가 명시한 수치·날짜·부정 조건에서 "
+                        "생성 조항과의 충돌이 발견되지 않았고, "
+                        "추가적인 의미 검증이 필요한 자유 조건도 없습니다."
                     ),
                 },
-                self._domain_consistency_check(
-                    domain_validation
-                ),
+                {
+                    "type": "CONTRACT_CONSISTENCY",
+                    "status": "PASS",
+                    "message": (
+                        "생성 조항에 명시된 원금·만기일·약정이율·"
+                        "정기 상환일·상환방식이 현재 계약의 "
+                        "확정값과 충돌하지 않습니다."
+                    ),
+                },
                 {
                     "type": "AMBIGUITY",
                     "status": "PASS",
@@ -711,6 +809,15 @@ class ClauseValidator:
                 llm_reasons=(
                     llm_reasons
                 ),
+                contract_clause_conflicts=(
+                    contract_clause_conflicts
+                ),
+                user_intent_conflicts=(
+                    user_intent_conflicts
+                ),
+                semantic_intent_review=(
+                    semantic_intent_review
+                ),
             )
         )
 
@@ -775,6 +882,9 @@ class ClauseValidator:
         missing_slots: list[str],
         legal_assertions: list[str],
         original_clause: str,
+        contract_clause_conflicts: list[str],
+        user_intent_conflicts: list[str],
+        semantic_intent_review: bool,
     ) -> list[str]:
         reasons: list[str] = []
 
@@ -810,6 +920,21 @@ class ClauseValidator:
         if legal_assertions:
             reasons.append(
                 "legal_assertion"
+            )
+
+        if contract_clause_conflicts:
+            reasons.append(
+                "contract_value_conflict"
+            )
+
+        if user_intent_conflicts:
+            reasons.append(
+                "user_intent_conflict"
+            )
+
+        if semantic_intent_review:
+            reasons.append(
+                "free_text_intent_requires_semantic_review"
             )
 
         return reasons
@@ -860,6 +985,602 @@ class ClauseValidator:
     # Deterministic 검사
     # ==========================================
 
+    @staticmethod
+    def _first_contract_value(
+        contract: dict[str, Any],
+        *keys: str,
+    ) -> Any:
+        for key in keys:
+            value = contract.get(
+                key
+            )
+
+            if value is None:
+                continue
+
+            if isinstance(
+                value,
+                str,
+            ):
+                value = value.strip()
+
+                if not value:
+                    continue
+
+            return value
+
+        return None
+
+    @staticmethod
+    def _normalize_money(
+        value: Any,
+    ) -> int | None:
+        try:
+            return int(
+                round(
+                    float(value)
+                )
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            return None
+
+    @staticmethod
+    def _normalize_rate(
+        value: Any,
+    ) -> float | None:
+        try:
+            return round(
+                float(value),
+                6,
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            return None
+
+    @staticmethod
+    def _normalize_date_text(
+        value: str,
+    ) -> str | None:
+        match = re.search(
+            r"(20\d{2})\s*[-./년]\s*"
+            r"(\d{1,2})\s*[-./월]\s*"
+            r"(\d{1,2})\s*일?",
+            str(value),
+        )
+
+        if not match:
+            return None
+
+        year = int(
+            match.group(1)
+        )
+        month = int(
+            match.group(2)
+        )
+        day = int(
+            match.group(3)
+        )
+
+        return (
+            f"{year:04d}-"
+            f"{month:02d}-"
+            f"{day:02d}"
+        )
+
+    def _find_contract_clause_conflicts(
+        self,
+        *,
+        contract: dict[str, Any],
+        clause: str,
+    ) -> list[str]:
+        """
+        생성 조항 안에서 '현재 계약의 확정값'이라고 해석할 수 있는
+        값만 골라 실제 계약정보와 비교한다.
+
+        위약금 2,000원처럼 새 조항 자체의 금액은 원금과 비교하지 않고,
+        '원금/대여금은 O원', '최종 만기일은 O'처럼 기존 계약 필드를
+        직접 다시 선언하는 표현만 검사한다.
+        """
+
+        conflicts: list[str] = []
+
+        principal = (
+            self._normalize_money(
+                self._first_contract_value(
+                    contract,
+                    "principalAmount",
+                    "principal",
+                )
+            )
+        )
+
+        if principal is not None:
+            principal_pattern = re.compile(
+                r"(?:대여\s*원금|대여금|차용금|원금)"
+                r"[^0-9]{0,18}"
+                r"([0-9][0-9,]*)\s*원"
+            )
+
+            for match in (
+                principal_pattern.finditer(
+                    clause
+                )
+            ):
+                clause_principal = (
+                    self._normalize_money(
+                        match.group(1).replace(
+                            ",",
+                            "",
+                        )
+                    )
+                )
+
+                if (
+                    clause_principal
+                    is not None
+                    and clause_principal
+                    != principal
+                ):
+                    conflicts.append(
+                        (
+                            "생성 조항이 현재 대여원금 "
+                            f"{principal}원과 다른 "
+                            f"{clause_principal}원을 "
+                            "원금/대여금으로 명시했습니다."
+                        )
+                    )
+
+        maturity_date = (
+            self._first_contract_value(
+                contract,
+                "maturityDate",
+                "repaymentDate",
+            )
+        )
+
+        normalized_maturity = (
+            self._normalize_date_text(
+                str(maturity_date)
+            )
+            if maturity_date
+            else None
+        )
+
+        if normalized_maturity:
+            maturity_pattern = re.compile(
+                r"(?:최종\s*)?"
+                r"(?:만기일|변제기일|변제기)"
+                r"[^0-9]{0,18}"
+                r"(20\d{2}\s*[-./년]\s*"
+                r"\d{1,2}\s*[-./월]\s*"
+                r"\d{1,2}\s*일?)"
+            )
+
+            for match in (
+                maturity_pattern.finditer(
+                    clause
+                )
+            ):
+                clause_date = (
+                    self._normalize_date_text(
+                        match.group(1)
+                    )
+                )
+
+                if (
+                    clause_date
+                    and clause_date
+                    != normalized_maturity
+                ):
+                    conflicts.append(
+                        (
+                            "생성 조항이 현재 최종 만기일 "
+                            f"{normalized_maturity}과 다른 "
+                            f"{clause_date}을 만기/변제기로 "
+                            "명시했습니다."
+                        )
+                    )
+
+        interest_rate = (
+            self._normalize_rate(
+                self._first_contract_value(
+                    contract,
+                    "interestRate",
+                )
+            )
+        )
+
+        if interest_rate is not None:
+            interest_pattern = re.compile(
+                r"(?<!연체)"
+                r"(?:약정\s*이율|약정\s*이자율|이자율)"
+                r"[^0-9]{0,12}"
+                r"([0-9]+(?:\.[0-9]+)?)\s*%"
+            )
+
+            for match in (
+                interest_pattern.finditer(
+                    clause
+                )
+            ):
+                clause_rate = (
+                    self._normalize_rate(
+                        match.group(1)
+                    )
+                )
+
+                if (
+                    clause_rate
+                    is not None
+                    and clause_rate
+                    != interest_rate
+                ):
+                    conflicts.append(
+                        (
+                            "생성 조항이 현재 약정이자율 "
+                            f"{interest_rate}%와 다른 "
+                            f"{clause_rate}%를 약정이율로 "
+                            "명시했습니다."
+                        )
+                    )
+
+        repayment_day = (
+            self._first_contract_value(
+                contract,
+                "repaymentDay",
+            )
+        )
+
+        try:
+            normalized_repayment_day = (
+                int(repayment_day)
+                if repayment_day is not None
+                else None
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            normalized_repayment_day = None
+
+        if normalized_repayment_day is not None:
+            repayment_day_pattern = re.compile(
+                r"(?:정기\s*)?"
+                r"(?:상환일|변제일)"
+                r"[^0-9]{0,12}"
+                r"(?:매월\s*)?"
+                r"(\d{1,2})\s*일"
+            )
+
+            for match in (
+                repayment_day_pattern.finditer(
+                    clause
+                )
+            ):
+                clause_day = int(
+                    match.group(1)
+                )
+
+                if (
+                    clause_day
+                    != normalized_repayment_day
+                ):
+                    conflicts.append(
+                        (
+                            "생성 조항이 현재 정기 상환일 "
+                            f"매월 {normalized_repayment_day}일과 "
+                            f"다른 매월 {clause_day}일을 "
+                            "상환일로 명시했습니다."
+                        )
+                    )
+
+        repayment_type = str(
+            self._first_contract_value(
+                contract,
+                "repaymentType",
+            )
+            or ""
+        ).strip()
+
+        repayment_labels = {
+            "EQUAL_PRINCIPAL_AND_INTEREST": (
+                "원리금균등상환"
+            ),
+            "EQUAL_PRINCIPAL": (
+                "원금균등상환"
+            ),
+            "BULLET": (
+                "만기일시상환"
+            ),
+            "LUMP_SUM": (
+                "일시상환"
+            ),
+        }
+
+        if repayment_type:
+            mentioned_types = [
+                (
+                    code,
+                    label,
+                )
+                for (
+                    code,
+                    label,
+                )
+                in repayment_labels.items()
+                if label in clause
+            ]
+
+            for (
+                code,
+                label,
+            ) in mentioned_types:
+                if (
+                    code
+                    != repayment_type
+                ):
+                    conflicts.append(
+                        (
+                            "생성 조항이 현재 상환방식 "
+                            f"{repayment_labels.get(repayment_type, repayment_type)}과 "
+                            f"다른 {label} 방식을 명시했습니다."
+                        )
+                    )
+
+        return (
+            self._deduplicate_strings(
+                conflicts
+            )
+        )
+
+    @staticmethod
+    def _extract_explicit_intent_tokens(
+        text: str,
+    ) -> list[str]:
+        """
+        사용자가 직접 확정한 수치/날짜 표현만 추출한다.
+        단순 숫자 전체를 비교하지 않고 단위가 있는 값만 대상으로 한다.
+        """
+
+        patterns = (
+            r"20\d{2}\s*[-./년]\s*\d{1,2}\s*[-./월]\s*\d{1,2}\s*일?",
+            r"\d+(?:\.\d+)?\s*%",
+            r"\d[\d,]*\s*(?:원|만원|억원)",
+            r"\d+\s*(?:개월|개월간|년|일|일간|회|회 이상|회 이하)",
+        )
+
+        tokens: list[str] = []
+
+        for pattern in patterns:
+            for match in re.findall(
+                pattern,
+                text,
+            ):
+                normalized = re.sub(
+                    r"\s+",
+                    "",
+                    str(match),
+                )
+
+                if (
+                    normalized
+                    and normalized
+                    not in tokens
+                ):
+                    tokens.append(
+                        normalized
+                    )
+
+        return tokens
+
+    @staticmethod
+    def _contains_normalized_token(
+        text: str,
+        token: str,
+    ) -> bool:
+        normalized_text = re.sub(
+            r"[\s,]",
+            "",
+            text,
+        ).replace(
+            "년",
+            "-",
+        ).replace(
+            "월",
+            "-",
+        ).replace(
+            "일",
+            "",
+        )
+
+        normalized_token = re.sub(
+            r"[\s,]",
+            "",
+            token,
+        ).replace(
+            "년",
+            "-",
+        ).replace(
+            "월",
+            "-",
+        ).replace(
+            "일",
+            "",
+        )
+
+        return (
+            normalized_token
+            in normalized_text
+        )
+
+    @staticmethod
+    def _is_keyword_negated(
+        text: str,
+        keyword: str,
+    ) -> bool:
+        keyword_index = (
+            text.find(
+                keyword
+            )
+        )
+
+        if keyword_index < 0:
+            return False
+
+        start = max(
+            0,
+            keyword_index - 18,
+        )
+
+        end = min(
+            len(text),
+            keyword_index
+            + len(keyword)
+            + 24,
+        )
+
+        context = (
+            text[
+                start:end
+            ]
+        )
+
+        negative_markers = (
+            "없이",
+            "없음",
+            "없도록",
+            "부과하지",
+            "지급하지",
+            "받지 않",
+            "요구하지",
+            "면제",
+            "부담하지",
+            "필요 없",
+        )
+
+        return any(
+            marker in context
+            for marker
+            in negative_markers
+        )
+
+    def _find_user_intent_conflicts(
+        self,
+        *,
+        message: str,
+        clause: str,
+    ) -> list[str]:
+        conflicts: list[str] = []
+
+        for token in (
+            self._extract_explicit_intent_tokens(
+                message
+            )
+        ):
+            if (
+                not self._contains_normalized_token(
+                    clause,
+                    token,
+                )
+            ):
+                conflicts.append(
+                    (
+                        "사용자가 직접 지정한 조건 "
+                        f"'{token}'이 생성 조항에 "
+                        "그대로 반영되지 않았습니다."
+                    )
+                )
+
+        for keyword in (
+            self.NEGATED_INTENT_KEYWORDS
+        ):
+            if keyword not in message:
+                continue
+
+            if (
+                not self._is_keyword_negated(
+                    message,
+                    keyword,
+                )
+            ):
+                continue
+
+            if keyword not in clause:
+                continue
+
+            if (
+                not self._is_keyword_negated(
+                    clause,
+                    keyword,
+                )
+            ):
+                conflicts.append(
+                    (
+                        "사용자는 "
+                        f"'{keyword}'을(를) 두지 않는 조건을 "
+                        "요청했지만 생성 조항은 해당 의무/비용을 "
+                        "부과할 가능성이 있습니다."
+                    )
+                )
+
+        return (
+            self._deduplicate_strings(
+                conflicts
+            )
+        )
+
+    def _requires_semantic_intent_review(
+        self,
+        *,
+        message: str,
+        conflicts: list[str],
+    ) -> bool:
+        """
+        명백한 사용자 의도 충돌은 이미
+        user_intent_conflict 사유로 LLM 검증 대상이 된다.
+
+        여기서는 deterministic rule만으로
+        의미 일치를 확정하기 어려운 제한/예외/순서 조건만
+        추가 semantic review 대상으로 판단한다.
+
+        예:
+        - "3개월 연속 연체한 경우에만"
+        - "원금에 대해서만"
+        - "담보를 제외하고"
+        - "오직 만기 이후에만"
+
+        반면 아래와 같은 일반 요청은
+        Slot 및 명시 조건 검증을 통과하면 Fast Path를 유지한다.
+
+        - "연체했을 때 위약금을 정하고 싶어요"
+        - "중도상환 조항을 넣고 싶어요"
+        - "연체하면 지연손해금을 정하고 싶어요"
+
+        "수수료 없이", "위약금 없이" 등의 부정 조건은
+        _find_user_intent_conflicts()에서 별도로 검증한다.
+        """
+
+        if conflicts:
+            return False
+
+        normalized = (
+            message.strip()
+        )
+
+        if not normalized:
+            return False
+
+        return any(
+            marker in normalized
+            for marker
+            in self.SEMANTIC_INTENT_MARKERS
+        )
+
     def _find_unresolved_ambiguous_phrases(
         self,
         *,
@@ -881,8 +1602,6 @@ class ClauseValidator:
             if phrase not in clause:
                 continue
 
-            # 사용자가 해당 범위를 직접 요청했다면
-            # 그 표현 자체가 확정된 의도일 수 있다.
             if phrase in normalized_message:
                 continue
 
@@ -1387,6 +2106,9 @@ warnings에 남긴다.
             Any,
         ],
         llm_reasons: list[str],
+        contract_clause_conflicts: list[str],
+        user_intent_conflicts: list[str],
+        semantic_intent_review: bool,
     ) -> str:
         reference_summaries = [
             self._reference_summary(
@@ -1414,6 +2136,15 @@ warnings에 남긴다.
 
 [LLM 검증이 호출된 이유]
 {json.dumps(llm_reasons, ensure_ascii=False, indent=2)}
+
+[Python이 발견한 계약 확정값 충돌]
+{json.dumps(contract_clause_conflicts, ensure_ascii=False, indent=2)}
+
+[Python이 발견한 사용자 요청 충돌]
+{json.dumps(user_intent_conflicts, ensure_ascii=False, indent=2)}
+
+[자유문장 의미 검증 필요 여부]
+{json.dumps(semantic_intent_review, ensure_ascii=False)}
 
 [현재 생성 문장에서 발견된 모호 표현]
 {json.dumps(ambiguous_matches, ensure_ascii=False, indent=2)}
