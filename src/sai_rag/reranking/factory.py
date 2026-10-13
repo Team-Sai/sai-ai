@@ -8,7 +8,9 @@ from sai_rag.reranking.bge_reranker import (
 
 
 def create_reranker(
-    provider: str = "bge-reranker",
+    provider: str = (
+        "bge-reranker"
+    ),
 ) -> RerankerProvider:
     normalized = (
         provider
@@ -21,9 +23,15 @@ def create_reranker(
         "bge-reranker",
         "bge-reranker-v2-m3",
     }:
-        return BgeReranker()
+        return (
+            BgeReranker(
+                batch_size=8,
+                max_length=512,
+            )
+        )
 
     raise ValueError(
-        "지원하지 않는 Reranker provider입니다: "
+        "지원하지 않는 "
+        "Reranker provider입니다: "
         f"{provider}"
     )
