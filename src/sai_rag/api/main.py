@@ -1,6 +1,7 @@
 from contextlib import (
     asynccontextmanager,
 )
+import os
 
 from fastapi import (
     FastAPI,
@@ -61,9 +62,23 @@ async def lifespan(
     # Retrieval
     # =========================================
 
+    qdrant_url = os.getenv(
+        "QDRANT_URL"
+    )
+
+    if not qdrant_url:
+        raise RuntimeError(
+            "QDRANT_URL 환경변수가 필요합니다."
+        )
+
     retriever = (
         LawRetriever(
-            provider="bge-m3"
+            provider="bge-m3",
+            qdrant_url=qdrant_url,
+            collection_name=os.getenv(
+                "QDRANT_COLLECTION",
+                "law_chunks_bge_m3",
+            ),
         )
     )
 
