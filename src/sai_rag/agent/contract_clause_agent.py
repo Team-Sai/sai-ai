@@ -1,29 +1,27 @@
+from __future__ import annotations
+
+import re
+from time import perf_counter
 from typing import Any
 
 from sai_rag.agent.clause_generator import (
     ClauseGenerator,
 )
-
 from sai_rag.agent.clause_query_builder import (
     ClauseQueryBuilder,
 )
-
 from sai_rag.agent.clause_validator import (
     ClauseValidator,
 )
-
 from sai_rag.agent.issue_analyzer import (
     ClauseIssueAnalyzer,
 )
-
 from sai_rag.reranking.base import (
     RerankerProvider,
 )
-
 from sai_rag.reranking.hybrid_ranker import (
     HybridRanker,
 )
-
 from sai_rag.retrieval.law_retriever import (
     LawRetriever,
 )
@@ -33,37 +31,49 @@ class ContractClauseAgent:
     """
     금전소비대차 계약 특약 작성 Agent.
 
-    V4.3
+    V5.4
+
+    Pipeline
 
     1. Issue Analysis
-    2. Multi-query
-    3. Metadata Filter
-    4. Vector Retrieval
+    2. Query Planning
+    3. Vector Retrieval
+    4. Candidate Merge / Pre-pruning
     5. Reranking
     6. Hybrid Ranking
-    7. Clause Generation
-    8. Domain Validation
-    9. LLM Clause Validation
-    10. User Intent Correction
+    7. Generation Context Pruning
+    8. Clause Generation
+    9. Deterministic / Conditional Validation
+
+    Performance Strategy
+
+    - Query별 Vector 후보: 8개
+    - Reranker 입력: 최대 10개
+    - 사용자에게 반환할 근거: 최대 5개
+    - Generator가 실제 읽을 근거: 상위 3개
     """
+
+    DEFAULT_CANDIDATE_TOP_K = 8
+
+    MAX_RERANK_CANDIDATES = 10
+
+    DEFAULT_FINAL_TOP_K = 5
+
+    GENERATOR_REFERENCE_TOP_K = 3
+
+    SLOT_PATTERN = re.compile(
+        r"\[입력\s*필요\s*:\s*([^\[\]]+)\]"
+    )
 
     def __init__(
         self,
         retriever: LawRetriever,
         generator: ClauseGenerator,
         reranker: RerankerProvider,
-    ):
-        self.retriever = (
-            retriever
-        )
-
-        self.generator = (
-            generator
-        )
-
-        self.reranker = (
-            reranker
-        )
+    ) -> None:
+        self.retriever = retriever
+        self.generator = generator
+        self.reranker = reranker
 
         self.issue_analyzer = (
             ClauseIssueAnalyzer()
@@ -88,17 +98,80 @@ class ContractClauseAgent:
         self,
         contract: dict[str, Any],
         message: str,
-        candidate_top_k: int = 12,
-        final_top_k: int = 5,
+        candidate_top_k: int | None = None,
+        final_top_k: int | None = None,
     ) -> dict[str, Any]:
         if not message.strip():
             raise ValueError(
                 "특약 요청 내용을 입력해주세요."
             )
 
+        resolved_candidate_top_k = (
+            candidate_top_k
+            if candidate_top_k is not None
+            else self.DEFAULT_CANDIDATE_TOP_K
+        )
+
+        resolved_final_top_k = (
+            final_top_k
+            if final_top_k is not None
+            else self.DEFAULT_FINAL_TOP_K
+        )
+
+        if resolved_candidate_top_k < 1:
+            raise ValueError(
+                "candidate_top_k는 1 이상이어야 합니다."
+            )
+
+        if resolved_final_top_k < 1:
+            raise ValueError(
+                "final_top_k는 1 이상이어야 합니다."
+            )
+
+        total_started_at = (
+            perf_counter()
+        )
+
+        performance: dict[
+            str,
+            float,
+        ] = {}
+
+        print()
+        print(
+            "[PERF][ClauseAgent] "
+            "========================================"
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            "request started"
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"message={message.strip()}"
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"candidate_top_k="
+            f"{resolved_candidate_top_k} "
+            f"max_rerank_candidates="
+            f"{self.MAX_RERANK_CANDIDATES} "
+            f"final_top_k="
+            f"{resolved_final_top_k} "
+            f"generator_reference_top_k="
+            f"{self.GENERATOR_REFERENCE_TOP_K}"
+        )
+
         # ======================================
         # 1. Issue Analysis
         # ======================================
+
+        started_at = (
+            perf_counter()
+        )
 
         issues = (
             self.issue_analyzer.analyze(
@@ -107,9 +180,26 @@ class ContractClauseAgent:
             )
         )
 
+        performance[
+            "issue_analysis"
+        ] = (
+            perf_counter()
+            - started_at
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"issue_analysis="
+            f"{performance['issue_analysis'] * 1000:.0f}ms"
+        )
+
         # ======================================
         # 2. Query Planning
         # ======================================
+
+        started_at = (
+            perf_counter()
+        )
 
         search_plans = (
             self.query_builder.build_queries(
@@ -119,21 +209,46 @@ class ContractClauseAgent:
             )
         )
 
-        collected_results: list[
-            dict[str, Any]
-        ] = []
+        performance[
+            "query_planning"
+        ] = (
+            perf_counter()
+            - started_at
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"query_planning="
+            f"{performance['query_planning'] * 1000:.0f}ms "
+            f"plans={len(search_plans)}"
+        )
 
         # ======================================
         # 3. Vector Retrieval
         # ======================================
 
-        for plan in search_plans:
+        collected_results: list[
+            dict[str, Any]
+        ] = []
+
+        retrieval_timings: list[
+            dict[str, Any]
+        ] = []
+
+        retrieval_started_at = (
+            perf_counter()
+        )
+
+        for index, plan in enumerate(
+            search_plans,
+            start=1,
+        ):
             query = str(
                 plan.get(
                     "query",
                     "",
                 )
-            )
+            ).strip()
 
             if not query:
                 continue
@@ -150,29 +265,61 @@ class ContractClauseAgent:
                 )
             )
 
+            single_started_at = (
+                perf_counter()
+            )
+
             results = (
                 self.retriever.retrieve(
                     question=query,
                     top_k=(
-                        candidate_top_k
+                        resolved_candidate_top_k
                     ),
-                    law_names=law_names,
+                    law_names=(
+                        law_names
+                    ),
                 )
+            )
+
+            elapsed = (
+                perf_counter()
+                - single_started_at
+            )
+
+            retrieval_timings.append(
+                {
+                    "index": index,
+                    "issueType": issue_type,
+                    "query": query,
+                    "lawNames": law_names,
+                    "resultCount": len(
+                        results
+                    ),
+                    "elapsedMs": round(
+                        elapsed * 1000,
+                        2,
+                    ),
+                }
+            )
+
+            print(
+                "[PERF][ClauseAgent] "
+                f"retrieval[{index}]="
+                f"{elapsed * 1000:.0f}ms "
+                f"issue={issue_type} "
+                f"results={len(results)}"
             )
 
             for result in results:
                 collected_results.append(
                     {
                         **result,
-
                         "_issue_type": (
                             issue_type
                         ),
-
                         "_query": (
                             query
                         ),
-
                         "_rerank_query": (
                             f"{message.strip()} "
                             f"{query}"
@@ -180,48 +327,158 @@ class ContractClauseAgent:
                     }
                 )
 
+        performance[
+            "retrieval"
+        ] = (
+            perf_counter()
+            - retrieval_started_at
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"retrieval_total="
+            f"{performance['retrieval'] * 1000:.0f}ms "
+            f"raw_candidates="
+            f"{len(collected_results)}"
+        )
+
         # ======================================
-        # 4. 후보 병합
+        # 4. Candidate Merge
         # ======================================
+
+        started_at = (
+            perf_counter()
+        )
 
         vector_candidates = (
             self._merge_vector_candidates(
                 collected_results,
-                max_results=20,
+                max_results=(
+                    self.MAX_RERANK_CANDIDATES
+                ),
             )
+        )
+
+        performance[
+            "candidate_merge"
+        ] = (
+            perf_counter()
+            - started_at
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"candidate_merge="
+            f"{performance['candidate_merge'] * 1000:.0f}ms "
+            f"merged_candidates="
+            f"{len(vector_candidates)}"
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"rerank_input_reduction="
+            f"{len(collected_results)}"
+            f"->{len(vector_candidates)}"
         )
 
         # ======================================
         # 5. Reranking
         # ======================================
 
-        reranked_candidates = (
-            self.reranker.rerank(
-                candidates=(
-                    vector_candidates
-                ),
-                top_k=len(
-                    vector_candidates
-                ),
+        started_at = (
+            perf_counter()
+        )
+
+        if vector_candidates:
+            reranked_candidates = (
+                self.reranker.rerank(
+                    candidates=(
+                        vector_candidates
+                    ),
+                    top_k=len(
+                        vector_candidates
+                    ),
+                )
             )
+        else:
+            reranked_candidates = []
+
+        performance[
+            "reranking"
+        ] = (
+            perf_counter()
+            - started_at
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"reranking="
+            f"{performance['reranking'] * 1000:.0f}ms "
+            f"candidates="
+            f"{len(vector_candidates)}"
         )
 
         # ======================================
         # 6. Hybrid Ranking
         # ======================================
 
-        final_references = (
-            self.hybrid_ranker.rank(
-                candidates=(
-                    reranked_candidates
-                ),
-                top_k=final_top_k,
+        started_at = (
+            perf_counter()
+        )
+
+        if reranked_candidates:
+            final_references = (
+                self.hybrid_ranker.rank(
+                    candidates=(
+                        reranked_candidates
+                    ),
+                    top_k=(
+                        resolved_final_top_k
+                    ),
+                )
             )
+        else:
+            final_references = []
+
+        performance[
+            "hybrid_ranking"
+        ] = (
+            perf_counter()
+            - started_at
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"hybrid_ranking="
+            f"{performance['hybrid_ranking'] * 1000:.0f}ms "
+            f"final_references="
+            f"{len(final_references)}"
         )
 
         # ======================================
-        # 7. Generation
+        # 7. Generator Context Pruning
         # ======================================
+
+        generation_references = (
+            final_references[
+                :self.GENERATOR_REFERENCE_TOP_K
+            ]
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"generation_references="
+            f"{len(generation_references)}"
+            f"/{len(final_references)}"
+        )
+
+        # ======================================
+        # 8. Clause Generation
+        # ======================================
+
+        started_at = (
+            perf_counter()
+        )
 
         generated = (
             self.generator.generate(
@@ -229,14 +486,51 @@ class ContractClauseAgent:
                 message=message,
                 issues=issues,
                 references=(
-                    final_references
+                    generation_references
                 ),
             )
         )
 
+        performance[
+            "generation"
+        ] = (
+            perf_counter()
+            - started_at
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"generation="
+            f"{performance['generation'] * 1000:.0f}ms"
+        )
+
+        print(
+            "[DEBUG][ClauseAgent] "
+            f"generator_warnings="
+            f"{generated.get('warnings', [])}"
+        )
+
+        print(
+            "[DEBUG][ClauseAgent] "
+            f"unresolved_decisions="
+            f"{generated.get('unresolvedDecisions', [])}"
+        )
+
         # ======================================
-        # 8~9. Domain + LLM Validation
+        # 9. Validation
         # ======================================
+        #
+        # Validator에는 최종 5개 전체를 전달한다.
+        #
+        # 평소에는 deterministic validation으로
+        # 즉시 통과하지만,
+        # LLM Validator가 필요한 예외 상황에서는
+        # 더 넓은 근거를 확인할 수 있다.
+        # ======================================
+
+        started_at = (
+            perf_counter()
+        )
 
         validation = (
             self.validator.validate(
@@ -250,43 +544,131 @@ class ContractClauseAgent:
             )
         )
 
-        final_clause = (
+        performance[
+            "validation"
+        ] = (
+            perf_counter()
+            - started_at
+        )
+
+        validator_mode = str(
+            validation.get(
+                "validatorMode",
+                "UNKNOWN",
+            )
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"validation="
+            f"{performance['validation'] * 1000:.0f}ms "
+            f"mode={validator_mode}"
+        )
+
+        # ======================================
+        # 10. Final Result
+        # ======================================
+
+        final_clause = str(
             validation.get(
                 "revisedClause"
+            )
+            or validation.get(
+                "suggestedClause"
             )
             or generated.get(
                 "suggestedClause"
             )
+            or ""
+        ).strip()
+
+        final_unresolved_decisions = (
+            self._rebuild_unresolved_decisions(
+                final_clause=final_clause,
+                generated_decisions=(
+                    generated.get(
+                        "unresolvedDecisions",
+                        [],
+                    )
+                ),
+            )
         )
 
         validator_warnings = (
+            self._normalize_warnings(
+                validation.get(
+                    "warnings"
+                )
+            )
+        )
+
+        generator_warnings = (
+            self._normalize_warnings(
+                generated.get(
+                    "warnings"
+                )
+            )
+        )
+
+        final_warnings = (
+            self._merge_warnings(
+                validator_warnings,
+                generator_warnings,
+            )
+        )
+
+        validation_status = str(
             validation.get(
-                "warnings",
+                "status",
+                "REVIEW",
+            )
+        ).upper()
+
+        validation_is_safe = bool(
+            validation.get(
+                "isSafeToSuggest",
+                validation_status
+                != "WARNING",
+            )
+        )
+
+        validation_checks = (
+            validation.get(
+                "checks",
                 [],
             )
         )
 
-        final_warnings = [
-            str(warning).strip()
-            for warning
-            in validator_warnings
-            if str(
-                warning
-            ).strip()
-        ]
+        if not isinstance(
+            validation_checks,
+            list,
+        ):
+            validation_checks = []
 
-        if not final_warnings:
-            final_warnings = [
-                str(warning).strip()
-                for warning
-                in generated.get(
-                    "warnings",
-                    [],
-                )
-                if str(
-                    warning
-                ).strip()
-            ]
+        performance[
+            "total"
+        ] = (
+            perf_counter()
+            - total_started_at
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            "----------------------------------------"
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"TOTAL="
+            f"{performance['total'] * 1000:.0f}ms"
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            "========================================"
+        )
+
+        print()
 
         return {
             "message": (
@@ -300,6 +682,7 @@ class ContractClauseAgent:
                             "type"
                         )
                     ),
+
                     "reason": (
                         issue.get(
                             "reason"
@@ -332,25 +715,19 @@ class ContractClauseAgent:
 
             "validation": {
                 "status": (
-                    validation.get(
-                        "status"
-                    )
+                    validation_status
                 ),
 
                 "isSafeToSuggest": (
-                    validation.get(
-                        "isSafeToSuggest"
-                    )
+                    validation_is_safe
                 ),
 
                 "checks": (
-                    validation.get(
-                        "checks",
-                        [],
-                    )
+                    validation_checks
                 ),
             },
 
+            # UI에는 최종 근거 5개 유지
             "references": [
                 self._to_public_reference(
                     reference
@@ -359,10 +736,133 @@ class ContractClauseAgent:
                 in final_references
             ],
 
+            # Validator가 문장을 수정하면서 Slot을 추가/삭제할 수 있으므로
+            # Generator의 목록을 그대로 사용하지 않고
+            # 최종 조항에 실제 존재하는 Slot 기준으로 다시 구성한다.
+            "unresolvedDecisions": (
+                final_unresolved_decisions
+            ),
+
             "debug": {
                 "pipelineVersion": (
-                    "V4.3"
+                    "V5.4"
                 ),
+
+                "validatorMode": (
+                    validator_mode
+                ),
+
+                "performance": {
+                    "issueAnalysisMs": round(
+                        performance[
+                            "issue_analysis"
+                        ]
+                        * 1000,
+                        2,
+                    ),
+
+                    "queryPlanningMs": round(
+                        performance[
+                            "query_planning"
+                        ]
+                        * 1000,
+                        2,
+                    ),
+
+                    "retrievalMs": round(
+                        performance[
+                            "retrieval"
+                        ]
+                        * 1000,
+                        2,
+                    ),
+
+                    "candidateMergeMs": round(
+                        performance[
+                            "candidate_merge"
+                        ]
+                        * 1000,
+                        2,
+                    ),
+
+                    "rerankingMs": round(
+                        performance[
+                            "reranking"
+                        ]
+                        * 1000,
+                        2,
+                    ),
+
+                    "hybridRankingMs": round(
+                        performance[
+                            "hybrid_ranking"
+                        ]
+                        * 1000,
+                        2,
+                    ),
+
+                    "generationMs": round(
+                        performance[
+                            "generation"
+                        ]
+                        * 1000,
+                        2,
+                    ),
+
+                    "validationMs": round(
+                        performance[
+                            "validation"
+                        ]
+                        * 1000,
+                        2,
+                    ),
+
+                    "totalMs": round(
+                        performance[
+                            "total"
+                        ]
+                        * 1000,
+                        2,
+                    ),
+
+                    "retrievalDetails": (
+                        retrieval_timings
+                    ),
+                },
+
+                "candidateOptimization": {
+                    "candidateTopK": (
+                        resolved_candidate_top_k
+                    ),
+
+                    "rawCandidateCount": (
+                        len(
+                            collected_results
+                        )
+                    ),
+
+                    "maxRerankCandidates": (
+                        self.MAX_RERANK_CANDIDATES
+                    ),
+
+                    "rerankCandidateCount": (
+                        len(
+                            vector_candidates
+                        )
+                    ),
+
+                    "finalReferenceCount": (
+                        len(
+                            final_references
+                        )
+                    ),
+
+                    "generatorReferenceCount": (
+                        len(
+                            generation_references
+                        )
+                    ),
+                },
 
                 "ranking": {
                     "strategy": (
@@ -387,14 +887,13 @@ class ContractClauseAgent:
                 ),
 
                 "validatedClause": (
-                    validation.get(
-                        "revisedClause"
-                    )
+                    final_clause
                 ),
 
                 "requiresRevision": (
                     validation.get(
-                        "requiresRevision"
+                        "requiresRevision",
+                        False,
                     )
                 ),
 
@@ -411,11 +910,15 @@ class ContractClauseAgent:
                     )
                 ),
 
-                "generatorWarnings": (
-                    generated.get(
-                        "warnings",
-                        [],
+                "validatorDebug": (
+                    validation.get(
+                        "debug",
+                        {},
                     )
+                ),
+
+                "generatorWarnings": (
+                    generator_warnings
                 ),
 
                 "validatorWarnings": (
@@ -450,12 +953,6 @@ class ContractClauseAgent:
                     in search_plans
                 ],
 
-                "candidateCount": (
-                    len(
-                        vector_candidates
-                    )
-                ),
-
                 "vectorCandidates": [
                     self._to_vector_debug(
                         candidate
@@ -482,12 +979,137 @@ class ContractClauseAgent:
             },
         }
 
+    @classmethod
+    def _extract_final_slots(
+        cls,
+        clause: str,
+    ) -> list[str]:
+        slots: list[str] = []
+
+        for raw_name in (
+            cls.SLOT_PATTERN.findall(
+                clause
+            )
+        ):
+            name = str(
+                raw_name
+            ).strip()
+
+            if (
+                name
+                and name
+                not in slots
+            ):
+                slots.append(
+                    name
+                )
+
+        return slots
+
+    @staticmethod
+    def _normalize_slot_label(
+        value: str,
+    ) -> str:
+        return re.sub(
+            r"[\s·ㆍ,./()_\-]",
+            "",
+            value,
+        ).lower()
+
+    @classmethod
+    def _rebuild_unresolved_decisions(
+        cls,
+        *,
+        final_clause: str,
+        generated_decisions: Any,
+    ) -> list[dict[str, str]]:
+        """
+        Validator가 revisedClause를 반환할 수 있으므로
+        unresolvedDecisions는 반드시 최종 조항의 Slot을 기준으로 만든다.
+
+        Generator가 동일 Slot에 제공했던 reason이 있으면 재사용하고,
+        Validator가 새 Slot을 추가했다면 일반 reason을 부여한다.
+        """
+
+        final_slots = (
+            cls._extract_final_slots(
+                final_clause
+            )
+        )
+
+        generated_reason_by_name: dict[
+            str,
+            str,
+        ] = {}
+
+        if isinstance(
+            generated_decisions,
+            list,
+        ):
+            for item in (
+                generated_decisions
+            ):
+                if not isinstance(
+                    item,
+                    dict,
+                ):
+                    continue
+
+                name = str(
+                    item.get(
+                        "name",
+                        "",
+                    )
+                ).strip()
+
+                reason = str(
+                    item.get(
+                        "reason",
+                        "",
+                    )
+                ).strip()
+
+                if not name:
+                    continue
+
+                generated_reason_by_name[
+                    cls._normalize_slot_label(
+                        name
+                    )
+                ] = reason
+
+        result: list[
+            dict[str, str]
+        ] = []
+
+        for slot in final_slots:
+            reason = (
+                generated_reason_by_name.get(
+                    cls._normalize_slot_label(
+                        slot
+                    )
+                )
+                or (
+                    "최종 계약 조항에서 아직 확정되지 않은 "
+                    "조건이므로 사용자가 값을 결정해야 합니다."
+                )
+            )
+
+            result.append(
+                {
+                    "name": slot,
+                    "reason": reason,
+                }
+            )
+
+        return result
+
     def _merge_vector_candidates(
         self,
         results: list[
             dict[str, Any]
         ],
-        max_results: int = 20,
+        max_results: int = 10,
     ) -> list[
         dict[str, Any]
     ]:
@@ -517,6 +1139,7 @@ class ContractClauseAgent:
                 merged[
                     document_id
                 ] = result
+
                 continue
 
             if float(
@@ -534,7 +1157,7 @@ class ContractClauseAgent:
                     document_id
                 ] = result
 
-        return sorted(
+        ranked_candidates = sorted(
             merged.values(),
             key=lambda item: float(
                 item.get(
@@ -543,15 +1166,70 @@ class ContractClauseAgent:
                 )
             ),
             reverse=True,
-        )[:max_results]
+        )
+
+        return ranked_candidates[
+            :max_results
+        ]
+
+    @staticmethod
+    def _normalize_warnings(
+        value: Any,
+    ) -> list[str]:
+        if not isinstance(
+            value,
+            list,
+        ):
+            return []
+
+        result: list[str] = []
+
+        for item in value:
+            text = str(
+                item
+            ).strip()
+
+            if (
+                text
+                and text
+                not in result
+            ):
+                result.append(
+                    text
+                )
+
+        return result
+
+    @staticmethod
+    def _merge_warnings(
+        *warning_groups: list[str],
+    ) -> list[str]:
+        result: list[str] = []
+
+        for group in (
+            warning_groups
+        ):
+            for warning in group:
+                if (
+                    warning
+                    and warning
+                    not in result
+                ):
+                    result.append(
+                        warning
+                    )
+
+        return result
 
     def _to_public_reference(
         self,
         reference: dict[str, Any],
     ) -> dict[str, Any]:
-        metadata = reference.get(
-            "metadata",
-            {},
+        metadata = (
+            reference.get(
+                "metadata",
+                {},
+            )
         )
 
         return {
@@ -615,9 +1293,11 @@ class ContractClauseAgent:
         self,
         reference: dict[str, Any],
     ) -> dict[str, Any]:
-        metadata = reference.get(
-            "metadata",
-            {},
+        metadata = (
+            reference.get(
+                "metadata",
+                {},
+            )
         )
 
         return {
@@ -626,26 +1306,31 @@ class ContractClauseAgent:
                     "document_id"
                 )
             ),
+
             "lawName": (
                 metadata.get(
                     "law_name"
                 )
             ),
+
             "articleNumber": (
                 metadata.get(
                     "article_number"
                 )
             ),
+
             "articleTitle": (
                 metadata.get(
                     "article_title"
                 )
             ),
+
             "vectorScore": (
                 reference.get(
                     "score"
                 )
             ),
+
             "matchedIssue": (
                 reference.get(
                     "_issue_type"

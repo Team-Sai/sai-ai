@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from time import perf_counter
 from typing import Any
 
 from dotenv import load_dotenv
@@ -15,20 +16,79 @@ class ClauseGenerator:
     """
     계약 조항 초안을 생성한다.
 
+    V5.4
+
     핵심 원칙:
     1. 검색된 법령 근거 안에서만 법적 설명을 작성한다.
     2. 사용자가 이미 정한 조건은 계약 문구에 직접 반영한다.
     3. 계약 효력/이행에 중요한데 아직 결정되지 않은 조건은
-       반드시 [입력 필요: 조건명] 형식의 Slot으로 남긴다.
-    4. 미정 조건을 '전부 또는 일부', '별도 합의',
-       '당사자가 정한다' 같은 표현으로 얼버무리지 않는다.
+       반드시 [입력 필요: 조건명] Slot으로 남긴다.
+    4. 미정 조건을 애매한 표현으로 숨기지 않는다.
+
+    성능 전략:
+    - 계약정보를 필요한 필드만 전달
+    - JSON pretty print 제거
+    - 법령 본문 길이 제한
+    - 불필요한 Prompt 설명 축소
     """
 
     PROVIDER_NAME = "openai"
 
     DEFAULT_MODEL = "gpt-6-luna"
 
-    ISSUE_DECISIONS: dict[str, list[str]] = {
+    MAX_REFERENCE_CONTENT_CHARS = 1800
+
+    CONTRACT_FIELDS = (
+        "principalAmount",
+        "interestRate",
+        "lateInterestRate",
+        "startDate",
+        "maturityDate",
+        "repaymentDay",
+        "repaymentType",
+        "contractAlias",
+        "terms",
+    )
+
+    # API/Spring 경계에서 사용하는 이름과
+    # Agent 내부 canonical 이름이 달라도 생성 프롬프트에서
+    # 확정 계약값이 누락되지 않도록 alias를 허용한다.
+    CONTRACT_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+        "principalAmount": (
+            "principalAmount",
+            "principal",
+        ),
+        "interestRate": (
+            "interestRate",
+        ),
+        "lateInterestRate": (
+            "lateInterestRate",
+        ),
+        "startDate": (
+            "startDate",
+        ),
+        "maturityDate": (
+            "maturityDate",
+            "repaymentDate",
+        ),
+        "repaymentDay": (
+            "repaymentDay",
+        ),
+        "repaymentType": (
+            "repaymentType",
+        ),
+        "contractAlias": (
+            "contractAlias",
+        ),
+        "terms": (
+            "terms",
+        ),
+    }
+
+    ISSUE_DECISIONS: dict[
+        str,
+        list[str],
+    ] = {
         "EARLY_REPAYMENT": [
             "중도상환 가능 범위",
             "최소 중도상환금액",
@@ -38,11 +98,13 @@ class ClauseGenerator:
             "중도상환일까지의 이자 정산 방식",
             "중도상환 수수료 또는 손해배상 처리",
         ],
+
         "DEFAULT": [
             "연체 판단 기준",
             "연체 횟수 산정 기준",
             "일부 지급 시 연체 처리 기준",
         ],
+
         "ACCELERATION": [
             "기한의 이익 상실 또는 일시변제 발생 요건",
             "연속 연체 판단 기준",
@@ -51,39 +113,47 @@ class ClauseGenerator:
             "사전 통지 방법",
             "변제 유예기간",
         ],
+
         "PENALTY": [
             "위약금 산정 기준",
             "위약금 적용 대상 금액",
             "위약금 발생 횟수",
             "위약금 산정 기간",
+            "위약금과 지연손해금의 관계",
         ],
+
         "LATE_INTEREST": [
             "연체이자율",
             "연체이자 계산 대상",
             "연체이자 계산 시작일",
             "연체이자 계산 종료일",
         ],
+
         "INTEREST": [
             "약정이율",
             "이자 계산 대상",
             "이자 계산 방식",
             "이자 지급일",
         ],
+
         "REPAYMENT": [
             "상환 방식",
             "상환일",
             "회차별 상환금액",
         ],
+
         "GUARANTEE": [
             "보증 범위",
             "보증 한도",
             "보증 기간",
         ],
+
         "COLLATERAL": [
             "담보 대상",
             "담보 범위",
             "담보 제공 시점",
         ],
+
         "OTHER": [],
     }
 
@@ -94,13 +164,17 @@ class ClauseGenerator:
     ) -> None:
         self.model = (
             model
-            or os.getenv("OPENAI_LLM_MODEL")
+            or os.getenv(
+                "OPENAI_LLM_MODEL"
+            )
             or self.DEFAULT_MODEL
         )
 
         resolved_api_key = (
             api_key
-            or os.getenv("OPENAI_API_KEY")
+            or os.getenv(
+                "OPENAI_API_KEY"
+            )
         )
 
         if not resolved_api_key:
@@ -117,7 +191,9 @@ class ClauseGenerator:
         )
 
     @property
-    def name(self) -> str:
+    def name(
+        self,
+    ) -> str:
         return self.PROVIDER_NAME
 
     def generate(
@@ -128,11 +204,6 @@ class ClauseGenerator:
         issues: list[dict[str, Any]],
         references: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """
-        사용자 요청 + 계약정보 + 쟁점 + 검색 법령으로
-        하나의 계약 조항 초안을 생성한다.
-        """
-
         issue_types = [
             str(
                 issue.get(
@@ -149,6 +220,24 @@ class ClauseGenerator:
             )
         )
 
+        compact_contract = (
+            self._compact_contract(
+                contract
+            )
+        )
+
+        compact_issues = (
+            self._compact_issues(
+                issues
+            )
+        )
+
+        compact_references = (
+            self._compact_references(
+                references
+            )
+        )
+
         system_prompt = (
             self._build_system_prompt()
         )
@@ -156,17 +245,52 @@ class ClauseGenerator:
         user_prompt = (
             self._build_user_prompt(
                 message=message,
-                contract=contract,
-                issues=issues,
-                references=references,
-                decision_candidates=decision_candidates,
+                contract=(
+                    compact_contract
+                ),
+                issues=(
+                    compact_issues
+                ),
+                references=(
+                    compact_references
+                ),
+                decision_candidates=(
+                    decision_candidates
+                ),
             )
         )
 
-        response = self.client.responses.create(
-            model=self.model,
-            instructions=system_prompt,
-            input=user_prompt,
+        input_chars = (
+            len(system_prompt)
+            + len(user_prompt)
+        )
+
+        print(
+            "[PERF][ClauseGenerator] "
+            f"input_chars={input_chars} "
+            f"references="
+            f"{len(compact_references)}"
+        )
+
+        started_at = (
+            perf_counter()
+        )
+
+        response = (
+            self.client.responses.create(
+                model=self.model,
+                instructions=(
+                    system_prompt
+                ),
+                input=(
+                    user_prompt
+                ),
+            )
+        )
+
+        api_elapsed = (
+            perf_counter()
+            - started_at
         )
 
         raw_text = (
@@ -175,125 +299,89 @@ class ClauseGenerator:
             )
         )
 
+        print(
+            "[PERF][ClauseGenerator] "
+            f"api="
+            f"{api_elapsed * 1000:.0f}ms "
+            f"output_chars="
+            f"{len(raw_text)}"
+        )
+
         parsed = (
             self._parse_json(
                 raw_text
             )
         )
 
-        return self._normalize_result(
-            parsed,
-            message=message,
+        return (
+            self._normalize_result(
+                parsed,
+                message=message,
+            )
         )
+
+    # ==========================================
+    # Prompt
+    # ==========================================
 
     def _build_system_prompt(
         self,
     ) -> str:
         return """
-당신은 개인 간 금전소비대차계약의 조항 초안을 작성하는 계약 조항 작성기다.
+개인 간 금전소비대차계약의 추가 조항 초안을 작성한다.
 
-역할은 법률상 최종 판단을 내리는 것이 아니라,
-사용자 요청과 현재 계약정보를 바탕으로 검색된 법령 근거 안에서
-계약서에 넣을 수 있는 조항 초안을 만드는 것이다.
+규칙:
 
-반드시 아래 규칙을 지켜라.
+1. 사용자 요청과 현재 계약정보에서 확정된 값은 그대로 반영한다.
 
-[가장 중요한 원칙]
+2. 계약 이행에 필요한 중요한 조건이 정해지지 않았다면
+임의로 결정하지 말고 반드시 다음 형식을 사용한다.
 
-1. 사용자가 명시적으로 정한 값이나 조건은 그대로 반영한다.
+[입력 필요: 조건명]
 
-2. 현재 계약정보나 사용자 요청으로 결정되지 않은 계약조건을
-   임의로 만들어서는 안 된다.
+3. 미정 조건을 아래 표현으로 숨기지 않는다.
 
-3. 계약의 실제 이행, 금액 계산, 의무 발생 시점,
-   당사자의 권리·의무 범위를 결정하는 중요한 조건이 미정이면
-   반드시 아래 형식으로 문장 안에 남긴다.
+- 전부 또는 일부
+- 필요한 경우
+- 상당한 기간
+- 적절한 방법
+- 별도로 정한다
+- 추후 합의한다
+- 당사자가 정한다
+- 당사자가 합의한다
 
-   [입력 필요: 조건명]
+단, 사용자가 해당 표현 자체를 명시적으로 요청한 경우는 제외한다.
 
-4. 아래와 같은 표현으로 미정 조건을 숨기면 안 된다.
+4. 한 Slot에는 하나의 결정값만 넣는다.
 
-   - 전부 또는 일부
-   - 필요한 경우
-   - 상당한 기간
-   - 적절한 방법
-   - 별도로 정한다
-   - 추후 합의한다
-   - 당사자가 합의한다
-   - 당사자가 정한다
-   - 별도 서면 합의에 따른다
+5. 검색된 법령 근거에 없는 법률·조문·판례를 만들지 않는다.
 
-   단, 사용자가 실제로 위 표현 자체를 요청한 경우는 제외한다.
+6. 법령에 직접 규정되지 않은 내용을
+법률상 당연한 효과처럼 단정하지 않는다.
 
-5. 예를 들어 사용자가 단순히
-   "만기 전에 원금을 먼저 갚을 수 있게 해줘"
-   라고 요청했다고 해서
+7. 조항에는 AI, 검색, RAG 같은 기술 용어를 쓰지 않는다.
 
-   "원금의 전부 또는 일부를 변제할 수 있다."
-
-   로 임의 확정하면 안 된다.
-
-   중도상환 범위가 결정되지 않았다면
-
-   "채무자는 최종 만기일 전에
-   [입력 필요: 중도상환 가능 범위]를 중도상환할 수 있다."
-
-   처럼 작성한다.
-
-6. 사용자가 이미
-   "전액이든 일부든 자유롭게 갚을 수 있게"
-   라고 요청했다면
-   그 부분은 확정된 조건이므로 Slot으로 만들지 않는다.
-
-7. 모든 Slot은 반드시 정확히 다음 문법을 사용한다.
-
-   [입력 필요: 조건명]
-
-   대괄호만 쓰거나
-   [조건명]
-   형태로 만들지 않는다.
-
-8. 하나의 Slot 안에는 하나의 판단값만 넣는다.
-
-   나쁜 예:
-   [입력 필요: 통지 방법과 유예기간]
-
-   좋은 예:
-   [입력 필요: 통지 방법]
-   [입력 필요: 변제 유예기간]
-
-9. Slot 이름은 짧고 사용자가 이해할 수 있어야 한다.
-
-10. 법령에 직접 규정되어 있지 않은 사항을
-    법률상 당연한 효과처럼 단정하지 않는다.
-
-11. 검색 근거에 없는 법률, 조문, 판례를 만들지 않는다.
-
-12. 조항 자체에는 기술 용어인 RAG, 검색, AI 등의 표현을 넣지 않는다.
-
-[출력]
+8. 사용자가 요청하지 않은 의무나 제한을 임의로 추가하지 않는다.
 
 반드시 JSON 객체 하나만 출력한다.
 
 {
-  "title": "조항 제목",
-  "summary": "이 조항이 왜 필요한지 쉬운 설명",
-  "suggestedClause": "실제 계약서 조항 문구",
-  "warnings": [
-    "사용자가 계약 전에 확인해야 할 내용"
-  ],
+  "title": "짧은 조항 제목",
+  "summary": "조항 목적을 한두 문장으로 설명",
+  "suggestedClause": "계약서에 들어갈 실제 조항",
+  "warnings": ["필요한 주의사항"],
   "unresolvedDecisions": [
     {
       "name": "Slot 조건명",
-      "reason": "왜 사용자가 결정해야 하는지"
+      "reason": "사용자가 결정해야 하는 이유"
     }
   ]
 }
 
-unresolvedDecisions에는 suggestedClause 안의
-[입력 필요: ...] 항목만 넣는다.
+unresolvedDecisions에는 suggestedClause에 실제로 존재하는
+[입력 필요: ...] 항목만 포함한다.
 
-미결정 조건이 없으면 빈 배열로 출력한다.
+미결정 조건이 없으면 빈 배열을 반환한다.
 """.strip()
 
     def _build_user_prompt(
@@ -301,70 +389,22 @@ unresolvedDecisions에는 suggestedClause 안의
         *,
         message: str,
         contract: dict[str, Any],
-        issues: list[dict[str, Any]],
-        references: list[dict[str, Any]],
+        issues: list[
+            dict[str, str]
+        ],
+        references: list[
+            dict[str, str]
+        ],
         decision_candidates: list[str],
     ) -> str:
-        reference_texts: list[str] = []
-
-        for index, reference in enumerate(
-            references,
-            start=1,
-        ):
-            law_name = (
-                reference.get("lawName")
-                or reference.get("law_name")
-                or ""
-            )
-
-            article_number = (
-                reference.get("articleNumber")
-                or reference.get(
-                    "article_number"
-                )
-                or ""
-            )
-
-            article_title = (
-                reference.get("articleTitle")
-                or reference.get(
-                    "article_title"
-                )
-                or ""
-            )
-
-            content = (
-                reference.get("content")
-                or reference.get("text")
-                or ""
-            )
-
-            reference_texts.append(
-                "\n".join(
-                    [
-                        f"[근거 {index}]",
-                        f"법령: {law_name}",
-                        (
-                            "조문: "
-                            f"{article_number} "
-                            f"{article_title}"
-                        ).strip(),
-                        f"내용: {content}",
-                    ]
-                )
-            )
-
-        joined_references = (
-            "\n\n".join(
-                reference_texts
-            )
-        )
-
         contract_json = (
             json.dumps(
                 contract,
                 ensure_ascii=False,
-                indent=2,
+                separators=(
+                    ",",
+                    ":",
+                ),
             )
         )
 
@@ -372,7 +412,10 @@ unresolvedDecisions에는 suggestedClause 안의
             json.dumps(
                 issues,
                 ensure_ascii=False,
-                indent=2,
+                separators=(
+                    ",",
+                    ":",
+                ),
             )
         )
 
@@ -380,39 +423,276 @@ unresolvedDecisions에는 suggestedClause 안의
             json.dumps(
                 decision_candidates,
                 ensure_ascii=False,
-                indent=2,
+                separators=(
+                    ",",
+                    ":",
+                ),
+            )
+        )
+
+        references_json = (
+            json.dumps(
+                references,
+                ensure_ascii=False,
+                separators=(
+                    ",",
+                    ":",
+                ),
             )
         )
 
         return f"""
-[사용자 요청]
+사용자 요청:
 {message}
 
-[현재 계약정보]
+계약정보:
 {contract_json}
 
-[분석된 법적 쟁점]
+법적 쟁점:
 {issues_json}
 
-[이 쟁점에서 계약 작성 시 검토할 수 있는 결정사항 후보]
+검토 가능한 미결정 조건 후보:
 {decisions_json}
 
-주의:
-위 결정사항 후보를 전부 Slot으로 만들라는 뜻은 아니다.
+법령 근거:
+{references_json}
 
-반드시 아래 순서로 판단한다.
+작성 순서:
+1. 사용자 요청에 이미 정해진 조건인지 확인한다.
+2. 계약정보에 이미 정해진 조건인지 확인한다.
+3. 조항 이행에 꼭 필요한데 미정이면 [입력 필요: ...]로 남긴다.
+4. 불필요한 조건은 추가하지 않는다.
 
-1. 사용자 메시지에 이미 값이 있는가?
-2. 현재 계약정보에 이미 값이 있는가?
-3. 조항의 실제 이행에 반드시 필요한 결정사항인가?
-4. 그렇다면 미정인 항목만 [입력 필요: ...]로 남긴다.
-5. 조항 작성에 꼭 필요하지 않은 부수사항은 억지로 추가하지 않는다.
-
-[검색된 법령 근거]
-{joined_references}
-
-위 정보만 사용해 조항 초안을 작성하라.
+위 정보만 사용해 조항을 작성한다.
 """.strip()
+
+    # ==========================================
+    # Compact Input
+    # ==========================================
+
+    def _compact_contract(
+        self,
+        contract: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        Generator에 필요한 계약정보만 canonical field명으로 전달한다.
+
+        API는 현재 principal / repaymentDate를 사용하고,
+        Generator prompt는 principalAmount / maturityDate를 사용한다.
+
+        두 계층의 이름 차이 때문에 원금·만기일이 prompt에서
+        사라지지 않도록 alias를 이 경계에서 흡수한다.
+        """
+
+        result: dict[
+            str,
+            Any,
+        ] = {}
+
+        for field in (
+            self.CONTRACT_FIELDS
+        ):
+            aliases = (
+                self.CONTRACT_FIELD_ALIASES.get(
+                    field,
+                    (field,),
+                )
+            )
+
+            value: Any = None
+
+            for alias in aliases:
+                candidate = (
+                    contract.get(
+                        alias
+                    )
+                )
+
+                if candidate is None:
+                    continue
+
+                if isinstance(
+                    candidate,
+                    str,
+                ):
+                    candidate = (
+                        candidate.strip()
+                    )
+
+                    if not candidate:
+                        continue
+
+                value = candidate
+                break
+
+            if value is None:
+                continue
+
+            result[
+                field
+            ] = value
+
+        return result
+
+    @staticmethod
+    def _compact_issues(
+        issues: list[
+            dict[str, Any]
+        ],
+    ) -> list[
+        dict[str, str]
+    ]:
+        result: list[
+            dict[str, str]
+        ] = []
+
+        for issue in issues:
+            issue_type = str(
+                issue.get(
+                    "type",
+                    "OTHER",
+                )
+            ).upper()
+
+            reason = str(
+                issue.get(
+                    "reason",
+                    "",
+                )
+            ).strip()
+
+            item: dict[
+                str,
+                str,
+            ] = {
+                "type": (
+                    issue_type
+                ),
+            }
+
+            if reason:
+                item[
+                    "reason"
+                ] = reason
+
+            result.append(
+                item
+            )
+
+        return result
+
+    def _compact_references(
+        self,
+        references: list[
+            dict[str, Any]
+        ],
+    ) -> list[
+        dict[str, str]
+    ]:
+        result: list[
+            dict[str, str]
+        ] = []
+
+        for reference in references:
+            metadata = (
+                reference.get(
+                    "metadata"
+                )
+                if isinstance(
+                    reference.get(
+                        "metadata"
+                    ),
+                    dict,
+                )
+                else {}
+            )
+
+            law_name = str(
+                reference.get(
+                    "lawName"
+                )
+                or reference.get(
+                    "law_name"
+                )
+                or metadata.get(
+                    "law_name"
+                )
+                or ""
+            ).strip()
+
+            article_number = str(
+                reference.get(
+                    "articleNumber"
+                )
+                or reference.get(
+                    "article_number"
+                )
+                or metadata.get(
+                    "article_number"
+                )
+                or ""
+            ).strip()
+
+            article_title = str(
+                reference.get(
+                    "articleTitle"
+                )
+                or reference.get(
+                    "article_title"
+                )
+                or metadata.get(
+                    "article_title"
+                )
+                or ""
+            ).strip()
+
+            content = str(
+                reference.get(
+                    "content"
+                )
+                or reference.get(
+                    "text"
+                )
+                or ""
+            ).strip()
+
+            if (
+                len(content)
+                > self.MAX_REFERENCE_CONTENT_CHARS
+            ):
+                content = (
+                    content[
+                        :self.MAX_REFERENCE_CONTENT_CHARS
+                    ].rstrip()
+                    + "…"
+                )
+
+            item = {
+                "law": (
+                    law_name
+                ),
+                "article": (
+                    article_number
+                ),
+                "content": (
+                    content
+                ),
+            }
+
+            if article_title:
+                item[
+                    "title"
+                ] = article_title
+
+            result.append(
+                item
+            )
+
+        return result
+
+    # ==========================================
+    # Decision Candidates
+    # ==========================================
 
     def _collect_decision_candidates(
         self,
@@ -420,7 +700,9 @@ unresolvedDecisions에는 suggestedClause 안의
     ) -> list[str]:
         result: list[str] = []
 
-        for issue_type in issue_types:
+        for issue_type in (
+            issue_types
+        ):
             candidates = (
                 self.ISSUE_DECISIONS.get(
                     issue_type,
@@ -428,13 +710,22 @@ unresolvedDecisions에는 suggestedClause 안의
                 )
             )
 
-            for candidate in candidates:
-                if candidate not in result:
+            for candidate in (
+                candidates
+            ):
+                if (
+                    candidate
+                    not in result
+                ):
                     result.append(
                         candidate
                     )
 
         return result
+
+    # ==========================================
+    # Response
+    # ==========================================
 
     @staticmethod
     def _extract_text(
@@ -454,8 +745,12 @@ unresolvedDecisions에는 suggestedClause 안의
         try:
             parts: list[str] = []
 
-            for item in response.output:
-                for content in item.content:
+            for item in (
+                response.output
+            ):
+                for content in (
+                    item.content
+                ):
                     text = getattr(
                         content,
                         "text",
@@ -476,7 +771,8 @@ unresolvedDecisions에는 suggestedClause 안의
             pass
 
         raise ValueError(
-            "ClauseGenerator 응답에서 텍스트를 찾지 못했습니다."
+            "ClauseGenerator 응답에서 "
+            "텍스트를 찾지 못했습니다."
         )
 
     @staticmethod
@@ -486,20 +782,31 @@ unresolvedDecisions에는 suggestedClause 안의
         cleaned = (
             raw_text
             .strip()
-            .removeprefix("```json")
-            .removeprefix("```")
-            .removesuffix("```")
+            .removeprefix(
+                "```json"
+            )
+            .removeprefix(
+                "```"
+            )
+            .removesuffix(
+                "```"
+            )
             .strip()
         )
 
         try:
-            value = json.loads(
-                cleaned
+            value = (
+                json.loads(
+                    cleaned
+                )
             )
 
-        except json.JSONDecodeError as exc:
+        except (
+            json.JSONDecodeError
+        ) as exc:
             raise ValueError(
-                "ClauseGenerator가 JSON 형식이 아닌 응답을 반환했습니다."
+                "ClauseGenerator가 JSON 형식이 "
+                "아닌 응답을 반환했습니다."
             ) from exc
 
         if not isinstance(
@@ -507,7 +814,8 @@ unresolvedDecisions에는 suggestedClause 안의
             dict,
         ):
             raise ValueError(
-                "ClauseGenerator 응답은 JSON 객체여야 합니다."
+                "ClauseGenerator 응답은 "
+                "JSON 객체여야 합니다."
             )
 
         return value
@@ -519,12 +827,16 @@ unresolvedDecisions에는 suggestedClause 안의
         message: str,
     ) -> dict[str, Any]:
         title = str(
-            result.get("title")
+            result.get(
+                "title"
+            )
             or "추가 약정"
         ).strip()
 
         summary = str(
-            result.get("summary")
+            result.get(
+                "summary"
+            )
             or ""
         ).strip()
 
@@ -535,8 +847,10 @@ unresolvedDecisions에는 suggestedClause 안의
             or ""
         ).strip()
 
-        warnings = result.get(
-            "warnings"
+        warnings = (
+            result.get(
+                "warnings"
+            )
         )
 
         if not isinstance(
@@ -546,13 +860,19 @@ unresolvedDecisions에는 suggestedClause 안의
             warnings = []
 
         normalized_warnings = [
-            str(item).strip()
+            str(
+                item
+            ).strip()
             for item in warnings
-            if str(item).strip()
+            if str(
+                item
+            ).strip()
         ]
 
-        unresolved = result.get(
-            "unresolvedDecisions"
+        unresolved = (
+            result.get(
+                "unresolvedDecisions"
+            )
         )
 
         if not isinstance(
@@ -573,12 +893,16 @@ unresolvedDecisions에는 suggestedClause 안의
                 continue
 
             name = str(
-                item.get("name")
+                item.get(
+                    "name"
+                )
                 or ""
             ).strip()
 
             reason = str(
-                item.get("reason")
+                item.get(
+                    "reason"
+                )
                 or ""
             ).strip()
 
@@ -593,10 +917,22 @@ unresolvedDecisions에는 suggestedClause 안의
             )
 
         return {
-            "message": message,
-            "title": title,
-            "summary": summary,
-            "suggestedClause": suggested_clause,
-            "warnings": normalized_warnings,
-            "unresolvedDecisions": normalized_unresolved,
+            "message": (
+                message
+            ),
+            "title": (
+                title
+            ),
+            "summary": (
+                summary
+            ),
+            "suggestedClause": (
+                suggested_clause
+            ),
+            "warnings": (
+                normalized_warnings
+            ),
+            "unresolvedDecisions": (
+                normalized_unresolved
+            ),
         }

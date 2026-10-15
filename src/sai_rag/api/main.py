@@ -1,6 +1,7 @@
 from contextlib import (
     asynccontextmanager,
 )
+import os
 
 from fastapi import (
     FastAPI,
@@ -61,9 +62,23 @@ async def lifespan(
     # Retrieval
     # =========================================
 
+    qdrant_url = os.getenv(
+        "QDRANT_URL"
+    )
+
+    if not qdrant_url:
+        raise RuntimeError(
+            "QDRANT_URL 환경변수가 필요합니다."
+        )
+
     retriever = (
         LawRetriever(
-            provider="bge-m3"
+            provider="bge-m3",
+            qdrant_url=qdrant_url,
+            collection_name=os.getenv(
+                "QDRANT_COLLECTION",
+                "law_chunks_bge_m3",
+            ),
         )
     )
 
@@ -251,17 +266,48 @@ def suggest_contract_clause(
             body.contract.model_dump()
         )
 
+        # API 요청 모델은 기존 호환성을 위해
+        # principal / repaymentDate를 유지한다.
+        #
+        # Agent/Generator에서는 의미가 더 명확한
+        # principalAmount / maturityDate도 함께 사용하도록
+        # canonical alias를 추가한다.
+        #
+        # 기존 ContractDomainValidator는 principal /
+        # repaymentDate를 계속 읽기 때문에 원래 key도 보존한다.
+        if (
+            contract.get(
+                "principalAmount"
+            )
+            is None
+        ):
+            contract[
+                "principalAmount"
+            ] = contract.get(
+                "principal"
+            )
+
+        if (
+            contract.get(
+                "maturityDate"
+            )
+            is None
+        ):
+            contract[
+                "maturityDate"
+            ] = contract.get(
+                "repaymentDate"
+            )
+
+        # 후보 수 / 최종 근거 수는
+        # ContractClauseAgent 내부 정책을 사용한다.
+
         return (
             clause_agent.suggest_clause(
                 contract=contract,
-
                 message=(
                     body.message
                 ),
-
-                candidate_top_k=12,
-
-                final_top_k=5,
             )
         )
 
