@@ -129,6 +129,15 @@ OTHER
 
 7. 반드시 JSON만 출력하세요.
 
+8. 먼저 사용자 요청이 금전소비대차(돈을 빌려주고 받는) 계약서의
+   특약·조항 작성 또는 수정과 관련 있는지 판단하세요.
+   관련 없으면(예: 요리, 날씨, 여행, 일반 상식, 코딩,
+   부동산 매매·임대차·근로계약 등 다른 종류의 계약)
+   "inScope": false 로 두고 "issues"는 빈 배열 [] 로 출력하세요.
+   이때 억지로 OTHER 쟁점을 만들지 마세요.
+
+9. 관련 있으면 "inScope": true 로 출력하세요.
+
 
 현재 계약 정보:
 
@@ -148,6 +157,7 @@ OTHER
 출력 형식:
 
 {{
+"inScope": true,
   "issues": [
     {{
       "type": "ACCELERATION",
@@ -177,6 +187,19 @@ OTHER
             raise ValueError(
                 "법률 쟁점 분석 결과를 JSON으로 해석하지 못했습니다."
             ) from exc
+
+        if not isinstance(
+            parsed,
+            dict,
+        ):
+            raise ValueError(
+                    "법률 쟁점 분석 결과 형식이 올바르지 않습니다."
+            )
+
+        # 계약 특약과 무관한 요청은 쟁점을 만들지 않고 빈 목록을 돌려준다.
+        # (ContractClauseAgent가 빈 목록을 보고 범위 밖 안내로 바로 종료한다.)
+        if parsed.get("inScope") is False:
+            return []
 
         raw_issues = parsed.get(
             "issues",
@@ -241,18 +264,10 @@ OTHER
                 }
             )
 
+        # 예전에는 쟁점이 없으면 OTHER를 강제로 넣어 끝까지 진행했지만,
+        # 그러면 관련 없는 질문에도 특약이 생성된다.
+        # 이제는 빈 목록을 돌려 범위 밖으로 처리한다.
         if not issues:
-            return [
-                {
-                    "type": "OTHER",
-                    "reason": (
-                        "명확한 법률 쟁점을 분류하지 못해 "
-                        "일반 금전소비대차 관점으로 검색합니다."
-                    ),
-                    "searchTerms": [
-                        message.strip()
-                    ],
-                }
-            ]
+            return []
 
         return issues

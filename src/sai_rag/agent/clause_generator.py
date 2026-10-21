@@ -8,6 +8,10 @@ from typing import Any
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from sai_rag.agent.openai_options import (
+    openai_call_options,
+)
+
 
 load_dotenv()
 
@@ -285,6 +289,7 @@ class ClauseGenerator:
                 input=(
                     user_prompt
                 ),
+                **openai_call_options("GENERATOR"),
             )
         )
 
