@@ -35,8 +35,21 @@ def openai_call_options(
     ).strip()
 
     if max_output_tokens:
-        options["max_output_tokens"] = int(
-            max_output_tokens
-        )
+        try:
+            parsed_tokens = int(
+                max_output_tokens
+            )
+        except ValueError:
+            parsed_tokens = None
+
+        if parsed_tokens is not None and parsed_tokens > 0:
+            options["max_output_tokens"] = parsed_tokens
+        else:
+            # 잘못된 값이면 옵션을 붙이지 않고 기본 동작으로 진행한다.
+            print(
+                "[OpenAIOptions][WARNING] "
+                f"OPENAI_{prefix}_MAX_OUTPUT_TOKENS 값이 올바르지 않아 무시합니다: "
+                f"{max_output_tokens!r}"
+            )
 
     return options

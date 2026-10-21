@@ -146,3 +146,18 @@ def test_validator_passes_call_options_to_llm(validator, monkeypatch):
         pass
     assert validator.client.responses.calls
     assert validator.client.responses.calls[0]["reasoning"] == {"effort": "low"}
+
+
+
+@pytest.mark.parametrize("bad_value", ["abc", "2,000", "0", "-5", "1.5"])
+def test_invalid_max_output_tokens_is_ignored(monkeypatch, bad_value):
+    monkeypatch.delenv("OPENAI_GENERATOR_REASONING_EFFORT", raising=False)
+    monkeypatch.setenv("OPENAI_GENERATOR_MAX_OUTPUT_TOKENS", bad_value)
+    # 예외 없이 옵션만 빠져야 한다
+    assert openai_call_options("GENERATOR") == {}
+
+
+def test_invalid_max_output_tokens_keeps_other_options(monkeypatch):
+    monkeypatch.setenv("OPENAI_VALIDATOR_REASONING_EFFORT", "low")
+    monkeypatch.setenv("OPENAI_VALIDATOR_MAX_OUTPUT_TOKENS", "abc")
+    assert openai_call_options("VALIDATOR") == {"reasoning": {"effort": "low"}}
