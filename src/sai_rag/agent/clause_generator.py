@@ -8,6 +8,10 @@ from typing import Any
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from sai_rag.agent.intent_value_normalizer import (
+    today_kst,
+)
+
 from sai_rag.agent.openai_options import (
     openai_call_options,
 )
@@ -368,6 +372,16 @@ class ClauseGenerator:
 
 8. 사용자가 요청하지 않은 의무나 제한을 임의로 추가하지 않는다.
 
+9. 기한의 이익 상실(남은 채무 일시 변제) 조항은
+"기한의 이익을 상실하고 남은 채무 전액을 즉시 변제한다"는 뜻을 반드시 포함한다.
+"한꺼번에 변제한다"만 쓰지 않는다.
+
+10. 금액은 "50,000원"처럼 아라비아 숫자와 쉼표로,
+날짜는 "2027년 1월 31일"처럼 연·월·일로 쓴다.
+"1년 뒤"처럼 기간으로 요청된 날짜는 실제 날짜로 계산해 쓴다.
+기준일은 사용자가 말한 날짜(예: "지급일로부터"), "오늘로부터"면 오늘 날짜,
+기준이 없으면 계약 시작일(startDate)로 한다.
+
 반드시 JSON 객체 하나만 출력한다.
 
 {
@@ -446,7 +460,11 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
             )
         )
 
+        today = today_kst().isoformat()
+
         return f"""
+오늘 날짜(한국 시간): {today}
+
 사용자 요청:
 {message}
 
