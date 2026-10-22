@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from time import perf_counter
-from typing import Any
+from typing import Any, Callable
 
 from sai_rag.agent.clause_generator import (
     ClauseGenerator,
@@ -26,6 +26,7 @@ from sai_rag.retrieval.law_retriever import (
     LawRetriever,
 )
 
+ClauseEventCallback = Callable[[str, dict[str, Any]], None]
 
 class ContractClauseAgent:
     """
@@ -100,7 +101,16 @@ class ContractClauseAgent:
         message: str,
         candidate_top_k: int | None = None,
         final_top_k: int | None = None,
+        on_event: ClauseEventCallback | None = None,
     ) -> dict[str, Any]:
+        """
+        on_event를 넘기면 단계가 진행될 때마다 이벤트를 알려준다.
+        (스트리밍 API에서 사용, 기존 호출은 넘기지 않으므로 동작이 같다)
+
+        - ("progress", {"step": "analysis" | "retrieval" | "generation" | "validation"})
+        - ("draft", 생성 직후 조항 초안 - 검증 전)
+        """
+
         if not message.strip():
             raise ValueError(
                 "특약 요청 내용을 입력해주세요."
@@ -169,6 +179,12 @@ class ContractClauseAgent:
         # 1. Issue Analysis
         # ======================================
 
+        self._emit(
+            on_event,
+            "progress",
+            {"step": "analysis"},
+        )
+
         started_at = (
             perf_counter()
         )
@@ -214,6 +230,12 @@ class ContractClauseAgent:
         # ======================================
         # 2. Query Planning
         # ======================================
+
+        self._emit(
+            on_event,
+            "progress",
+            {"step": "retrieval"},
+        )
 
         started_at = (
             perf_counter()
@@ -494,6 +516,12 @@ class ContractClauseAgent:
         # 8. Clause Generation
         # ======================================
 
+        self._emit(
+            on_event,
+            "progress",
+            {"step": "generation"},
+        )
+
         started_at = (
             perf_counter()
         )
@@ -532,6 +560,34 @@ class ContractClauseAgent:
             "[DEBUG][ClauseAgent] "
             f"unresolved_decisions="
             f"{generated.get('unresolvedDecisions', [])}"
+        )
+
+        # ======================================
+        # 8-1. Draft 이벤트 (검증 전 조항 초안)
+        # ======================================
+
+        self._emit(
+            on_event,
+            "draft",
+            {
+                "title": generated.get("title"),
+                "summary": generated.get("summary"),
+                "suggestedClause": generated.get("suggestedClause"),
+                "warnings": generated.get("warnings") or [],
+                "unresolvedDecisions": (
+                    generated.get("unresolvedDecisions") or []
+                ),
+                "references": [
+                    self._to_public_reference(reference)
+                    for reference in final_references
+                ],
+            },
+        )
+
+        self._emit(
+            on_event,
+            "progress",
+            {"step": "validation"},
         )
 
         # ======================================
@@ -996,6 +1052,27 @@ class ContractClauseAgent:
                 ],
             },
         }
+
+    @staticmethod
+    def _emit(
+        on_event: ClauseEventCallback | None,
+        event: str,
+        data: dict[str, Any],
+    ) -> None:
+        """
+        이벤트를 알린다. 받는 쪽에서 오류가 나도 특약 생성은 계속한다.
+        """
+
+        if on_event is None:
+            return
+
+        try:
+            on_event(event, data)
+        except Exception as exc:  # noqa: BLE001 - 이벤트 전달 실패가 생성을 멈추면 안 됨
+            print(
+                "[ClauseAgent][WARNING] "
+                f"event callback failed: {event} {exc!r}"
+            )
 
     OUT_OF_SCOPE_GUIDE = (
         "사이원장 AI는 금전소비대차 계약서의 특약 작성만 도와드릴 수 있어요. "
