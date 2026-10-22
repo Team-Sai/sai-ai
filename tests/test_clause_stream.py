@@ -247,3 +247,32 @@ def test_existing_endpoint_still_returns_json():
 
     assert response.status_code == 200
     assert response.json()["suggestedClause"] == DRAFT
+
+
+# ---------------------------------------------------------------
+# API 경로 회귀 테스트: 백엔드(RagApiClient)가 부르는 경로가
+# 빠지거나 두 번 등록되지 않았는지 확인한다.
+# ---------------------------------------------------------------
+
+def _post_paths():
+    from sai_rag.api import main
+
+    return [
+        route.path
+        for route in main.app.routes
+        if "POST" in getattr(route, "methods", set())
+    ]
+
+
+def test_backend_routes_exist():
+    assert {
+        "/rag/contracts/review",
+        "/rag/contracts/clause-suggestions",
+        "/rag/contracts/clause-suggestions/stream",
+    } <= set(_post_paths())
+
+
+def test_no_duplicate_post_routes():
+    paths = _post_paths()
+    assert len(paths) == len(set(paths))
+

@@ -211,6 +211,50 @@ def health():
         },
     }
 
+@app.post(
+    "/rag/contracts/review"
+)
+def review_contract(
+    request: Request,
+    body: ContractReviewRequest,
+):
+    try:
+        review_service = (
+            request.app.state
+            .review_service
+        )
+
+        contract = (
+            body.model_dump()
+        )
+
+        return (
+            review_service.review(
+                contract=contract,
+                top_k=3,
+                generate=True,
+            )
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    except Exception as exc:
+        print(
+            "[Review Error]",
+            repr(exc),
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "차용증 법률 검토 중 "
+                "오류가 발생했습니다."
+            ),
+        ) from exc
 
 @app.post(
     "/rag/contracts/clause-suggestions"
@@ -298,14 +342,6 @@ def suggest_contract_clause_stream(
         },
     )
 
-
-@app.post(
-    "/rag/contracts/clause-suggestions"
-)
-def suggest_contract_clause(
-    request: Request,
-    body: ContractClauseSuggestionRequest,
-):
     try:
         clause_agent = (
             request.app.state
