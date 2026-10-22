@@ -12,12 +12,25 @@ from sai_rag.agent.openai_options import (
     openai_call_options,
 )
 
+from sai_rag.agent.intent_value_normalizer import (
+    DATE_PATTERN,
+    extra_value_tokens,
+    find_amounts,
+    find_dates,
+    find_percents,
+    is_value_reflected,
+)
+
 from sai_rag.agent.contract_domain_validator import (
     ContractDomainValidator,
 )
 
 
 load_dotenv()
+
+
+# "2026년 12월 31일"에서 떨어져 나온 "2026년", "31일" 같은 날짜 조각
+DATE_FRAGMENT_PATTERN = re.compile(r"\d+(?:년|월|일)")
 
 
 class ClauseValidator:
@@ -377,6 +390,7 @@ class ClauseValidator:
             self._find_user_intent_conflicts(
                 message=message,
                 clause=original_clause,
+                contract=contract,
             )
         )
 
@@ -1503,32 +1517,119 @@ class ClauseValidator:
             in negative_markers
         )
 
+    def _collect_intent_value_tokens(
+        self,
+        message: str,
+    ) -> list[str]:
+        """
+        기존 정규식 토큰 + 정규식이 놓치는 금액·퍼센트 표현
+        ("5백만원", "1억 2천만원", "오만 원", "5.5퍼센트").
+        이미 같은 값의 토큰이 있으면 추가하지 않는다.
+        """
+
+        tokens = self._extract_explicit_intent_tokens(
+            message
+        )
+
+        covered_amounts: set[int] = set()
+        covered_percents: set[float] = set()
+
+        for token in tokens:
+            covered_amounts |= find_amounts(token)
+            covered_percents |= find_percents(token)
+
+        for extra in extra_value_tokens(message):
+            amounts = find_amounts(extra)
+            percents = find_percents(extra)
+
+            if amounts and amounts <= covered_amounts:
+                continue
+
+            if percents and percents <= covered_percents:
+                continue
+
+            if extra not in tokens:
+                tokens.append(extra)
+                covered_amounts |= amounts
+                covered_percents |= percents
+
+        return tokens
+
+    @staticmethod
+    def _is_reflected_date_fragment(
+        *,
+        token: str,
+        message: str,
+        clause: str,
+    ) -> bool:
+        """
+        "2026년 12월 31일"에서 떨어져 나온 "2026년", "31일" 같은 조각은
+        전체 날짜가 조항에 (표기만 달리) 들어 있으면 반영된 것으로 본다.
+        """
+
+        if not DATE_FRAGMENT_PATTERN.fullmatch(token):
+            return False
+
+        clause_dates = find_dates(clause)
+
+        for match in DATE_PATTERN.finditer(message):
+            phrase = re.sub(r"\s+", "", match.group(0))
+
+            if token not in phrase:
+                continue
+
+            message_dates = find_dates(match.group(0))
+
+            if message_dates and message_dates <= clause_dates:
+                return True
+
+        return False
+
     def _find_user_intent_conflicts(
         self,
         *,
         message: str,
         clause: str,
+        contract: dict[str, Any] | None = None,
     ) -> list[str]:
         conflicts: list[str] = []
 
         for token in (
-            self._extract_explicit_intent_tokens(
+            self._collect_intent_value_tokens(
                 message
             )
         ):
-            if (
-                not self._contains_normalized_token(
-                    clause,
-                    token,
-                )
+            if self._contains_normalized_token(
+                clause,
+                token,
             ):
-                conflicts.append(
-                    (
-                        "사용자가 직접 지정한 조건 "
-                        f"'{token}'이 생성 조항에 "
-                        "그대로 반영되지 않았습니다."
-                    )
+                continue
+
+            # 글자가 달라도 같은 값이면 반영된 것으로 본다.
+            # (5만원 = 50,000원, 2026.12.31 = 2026년 12월 31일,
+            #  오늘로부터 1년 뒤 = 계산된 날짜)
+            if is_value_reflected(
+                token=token,
+                message=message,
+                clause=clause,
+                contract=contract,
+            ):
+                continue
+
+            if self._is_reflected_date_fragment(
+                token=token,
+                message=message,
+                clause=clause,
+            ):
+                continue
+
+            conflicts.append(
+                (
+                    "사용자가 직접 지정한 조건 "
+                    f"'{token}'이 생성 조항에 "
+                    "그대로 반영되지 않았습니다."
                 )
+            )
 
         for keyword in (
             self.NEGATED_INTENT_KEYWORDS
