@@ -123,3 +123,28 @@ def test_generator_prompt_has_acceleration_and_format_rules():
     assert "즉시 변제" in prompt
     assert "50,000원" in prompt
     assert "실제 날짜로 계산" in prompt
+
+
+# ---------------------------------------------------------------
+# 5. 잘못된 숫자 표현은 금액으로 보지 않는다 (리뷰 반영)
+# ---------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "text",
+    ["이삼원", "오오만원", "백천원", "천천원", "만억원", "5만5만원"],
+)
+def test_invalid_korean_number_is_not_amount(text):
+    assert normalizer.find_amounts(text) == set()
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("일억 이천만 원", {120_000_000}),
+        ("삼천오백만원", {35_000_000}),
+        ("1조 2억원", {1_000_200_000_000}),
+        ("원금과 지원금은 없다", set()),
+    ],
+)
+def test_valid_unit_order_still_parses(text, expected):
+    assert normalizer.find_amounts(text) == expected

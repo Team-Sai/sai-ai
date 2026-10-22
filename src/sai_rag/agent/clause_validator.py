@@ -29,6 +29,10 @@ from sai_rag.agent.contract_domain_validator import (
 load_dotenv()
 
 
+# "2026년 12월 31일"에서 떨어져 나온 "2026년", "31일" 같은 날짜 조각
+DATE_FRAGMENT_PATTERN = re.compile(r"\d+(?:년|월|일)")
+
+
 class ClauseValidator:
     """
     생성된 계약 조항의 최종 안전 검증을 담당한다.
@@ -1563,7 +1567,7 @@ class ClauseValidator:
         전체 날짜가 조항에 (표기만 달리) 들어 있으면 반영된 것으로 본다.
         """
 
-        if not re.fullmatch(r"\d+(?:년|월|일)", token):
+        if not DATE_FRAGMENT_PATTERN.fullmatch(token):
             return False
 
         clause_dates = find_dates(clause)

@@ -48,7 +48,10 @@ BIG_UNITS = {
     "조": 1_000_000_000_000,
 }
 
-AMOUNT_CHARS = set("0123456789,. ") | set(KOREAN_DIGITS) | set(SMALL_UNITS) | set(BIG_UNITS)
+# "…원" 바로 앞에 붙은 숫자 표현 덩어리 (아라비아 숫자, 쉼표, 소수점, 공백, 한글 숫자·단위)
+AMOUNT_SPAN_PATTERN = re.compile(
+    r"[0-9,.\s영공일이삼사오육칠팔구십백천만억조]+(?=원)"
+)
 
 PERCENT_PATTERN = re.compile(
     r"(\d+(?:\.\d+)?)\s*(?:%|퍼센트|프로)"
@@ -87,6 +90,10 @@ def _parse_amount_phrase(phrase: str) -> int | None:
     current: float | None = None
     index = 0
     seen_value = False
+    # 단위는 큰 것에서 작은 것 순서로만 올 수 있다.
+    # (예: "1억 2천만" O, "백천", "만억", "천천" X)
+    last_small = 10_000
+    last_big = 10 ** 16
 
     while index < len(text):
         char = text[index]
@@ -111,21 +118,34 @@ def _parse_amount_phrase(phrase: str) -> int | None:
             continue
 
         if char in SMALL_UNITS:
-            section += (current if current is not None else 1) * SMALL_UNITS[char]
+            unit = SMALL_UNITS[char]
+
+            if unit >= last_small:
+                return None
+
+            last_small = unit
+            section += (current if current is not None else 1) * unit
             current = None
             index += 1
             seen_value = True
             continue
 
         if char in BIG_UNITS:
+            unit = BIG_UNITS[char]
+
+            if unit >= last_big:
+                return None
+
+            last_big = unit
             value = section + (current if current is not None else 0)
 
             if value == 0:
                 value = 1
 
-            total += value * BIG_UNITS[char]
+            total += value * unit
             section = 0
             current = None
+            last_small = 10_000
             index += 1
             seen_value = True
             continue
@@ -147,21 +167,15 @@ def find_amounts(text: str) -> set[int]:
     """
     문장 안의 '...원' 금액을 모두 찾아 정수로 돌려준다.
 
-    '원' 앞의 숫자 표현을 거꾸로 모은 뒤,
+    '원' 바로 앞의 숫자 표현 덩어리를 정규식으로 찾은 뒤,
     파싱되는 가장 긴 뒷부분만 사용한다.
     (예: "매월 13일 10만원" → "13일10만"은 실패, "10만"은 성공 → 100,000)
     """
 
     amounts: set[int] = set()
 
-    for match in re.finditer("원", text):
-        end = match.start()
-        start = end
-
-        while start > 0 and text[start - 1] in AMOUNT_CHARS:
-            start -= 1
-
-        phrase = text[start:end].strip()
+    for match in AMOUNT_SPAN_PATTERN.finditer(text):
+        phrase = match.group(0).strip()
 
         if not phrase:
             continue
