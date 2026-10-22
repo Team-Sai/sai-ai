@@ -8,6 +8,10 @@ from typing import Any
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from sai_rag.agent.openai_options import (
+    openai_call_options,
+)
+
 from sai_rag.agent.contract_domain_validator import (
     ContractDomainValidator,
 )
@@ -722,16 +726,46 @@ class ClauseValidator:
                         "확정값과 충돌하지 않습니다."
                     ),
                 },
-                {
-                    "type": "AMBIGUITY",
-                    "status": "PASS",
-                    "message": (
-                        "미정 계약조건은 입력 Slot으로 "
-                        "구조화되어 있으며 "
-                        "추가적인 모호 표현이 "
-                        "감지되지 않았습니다."
-                    ),
-                },
+                (
+                    {
+                        "type": "AMBIGUITY",
+                        "status": "WARNING",
+                        "message": (
+                            "조항에 모호한 표현이 있어요: "
+                            + ", ".join(
+                                f"'{match['phrase']}'"
+                                for match in ambiguous_matches
+                            )
+                            + ". 구체적인 기간·조건으로 바꾸거나 "
+                            "[입력 필요: …] 칸으로 남겨 주세요."
+                        ),
+                    }
+                    if ambiguous_matches
+                    else {
+                        "type": "AMBIGUITY",
+                        "status": "PASS",
+                        "message": (
+                            "미정 계약조건은 입력 Slot으로 "
+                            "구조화되어 있으며 "
+                            "추가적인 모호 표현이 "
+                            "감지되지 않았습니다."
+                        ),
+                    }
+                ),
+            ]
+
+            fast_path_status = (
+                "WARNING"
+                if ambiguous_matches
+                else "PASS"
+            )
+
+            fast_path_warnings = list(
+                generator_warnings
+            ) + [
+                f"'{match['phrase']}' 표현: {match['reason']} "
+                "구체적으로 정해 주세요."
+                for match in ambiguous_matches
             ]
 
             return self._build_result(
@@ -742,9 +776,9 @@ class ClauseValidator:
                     original_clause
                 ),
                 warnings=(
-                    generator_warnings
+                    fast_path_warnings
                 ),
-                status="PASS",
+                status=fast_path_status,
                 is_safe=True,
                 checks=checks,
                 domain_validation=(
@@ -826,6 +860,7 @@ class ClauseValidator:
                 model=self.model,
                 instructions=system_prompt,
                 input=user_prompt,
+                **openai_call_options("VALIDATOR")
             )
         )
 
@@ -907,10 +942,8 @@ class ClauseValidator:
                 "risky_generator_warning"
             )
 
-        if ambiguous_matches:
-            reasons.append(
-                "unresolved_ambiguity"
-            )
+        # 모호 표현(ambiguous_matches)은 규칙으로 정확히 찾을 수 있으므로
+        # LLM 재검증 사유로 쓰지 않는다. (Fast Path에서 WARNING으로 안내)
 
         if missing_slots:
             reasons.append(
@@ -1461,6 +1494,7 @@ class ClauseValidator:
             "면제",
             "부담하지",
             "필요 없",
+            "청구하지",
         )
 
         return any(

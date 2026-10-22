@@ -48,14 +48,14 @@ class ContractClauseAgent:
     Performance Strategy
 
     - Query별 Vector 후보: 8개
-    - Reranker 입력: 최대 10개
+    - Reranker 입력: 최대 5개
     - 사용자에게 반환할 근거: 최대 5개
     - Generator가 실제 읽을 근거: 상위 3개
     """
 
     DEFAULT_CANDIDATE_TOP_K = 8
 
-    MAX_RERANK_CANDIDATES = 10
+    MAX_RERANK_CANDIDATES = 5
 
     DEFAULT_FINAL_TOP_K = 5
 
@@ -192,6 +192,24 @@ class ContractClauseAgent:
             f"issue_analysis="
             f"{performance['issue_analysis'] * 1000:.0f}ms"
         )
+
+        # ======================================
+        # 1-1. Scope Guard
+        # ======================================
+        # 계약 특약과 관계없는 요청(예: 요리법)은
+        # 법령 검색·리랭킹·생성을 하지 않고 바로 안내한다.
+        if not issues:
+            print(
+                "[PERF][ClauseAgent] "
+                "out_of_scope=true -> skip retrieval/rerank/generation"
+            )
+
+            return self._out_of_scope_response(
+                message=message,
+                issue_analysis_ms=(
+                    performance["issue_analysis"] * 1000
+                ),
+            )
 
         # ======================================
         # 2. Query Planning
@@ -976,6 +994,62 @@ class ContractClauseAgent:
                     for candidate
                     in final_references
                 ],
+            },
+        }
+
+    OUT_OF_SCOPE_GUIDE = (
+        "사이원장 AI는 금전소비대차 계약서의 특약 작성만 도와드릴 수 있어요. "
+        "이자, 상환 방법, 연체, 중도상환, 보증처럼 "
+        "계약 조건에 대해 요청해 주세요."
+    )
+
+    def _out_of_scope_response(
+        self,
+        message: str,
+        issue_analysis_ms: float,
+    ) -> dict[str, Any]:
+        """
+        계약 특약과 무관한 요청에 대한 응답.
+
+        기존 응답과 같은 필드를 유지해서 백엔드/프론트가
+        그대로 받을 수 있게 한다.
+        - suggestedClause는 비워 두고
+        - validation.isSafeToSuggest=false + warnings로 사유를 전달한다.
+          (백엔드 RagApiClient는 "조항 없음 + 거절 + 사유 있음"을 정상 응답으로 처리)
+        """
+        return {
+            "message": message,
+            "issues": [],
+            "title": "요청 범위 밖이에요",
+            "summary": self.OUT_OF_SCOPE_GUIDE,
+            "suggestedClause": None,
+            "warnings": [
+                self.OUT_OF_SCOPE_GUIDE,
+            ],
+            "validation": {
+                "status": "OUT_OF_SCOPE",
+                "isSafeToSuggest": False,
+                "checks": [
+                    {
+                        "type": "SCOPE",
+                        "status": "REJECTED",
+                        "message": (
+                            "금전소비대차 계약 특약과 관련 없는 요청입니다."
+                        ),
+                    }
+                ],
+            },
+            "references": [],
+            "unresolvedDecisions": [],
+            "debug": {
+                "pipelineVersion": "V5.4",
+                "outOfScope": True,
+                "performance": {
+                    "issueAnalysisMs": round(
+                        issue_analysis_ms,
+                        2,
+                    ),
+                },
             },
         }
 
