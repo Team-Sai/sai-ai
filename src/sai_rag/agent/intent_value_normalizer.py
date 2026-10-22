@@ -90,6 +90,7 @@ def _parse_amount_phrase(phrase: str) -> int | None:
     current: float | None = None
     index = 0
     seen_value = False
+
     # 단위는 큰 것에서 작은 것 순서로만 올 수 있다.
     # (예: "1억 2천만" O, "백천", "만억", "천천" X)
     last_small = 10_000
@@ -125,6 +126,7 @@ def _parse_amount_phrase(phrase: str) -> int | None:
 
             last_small = unit
             section += (current if current is not None else 1) * unit
+
             current = None
             index += 1
             seen_value = True
@@ -166,7 +168,6 @@ def _parse_amount_phrase(phrase: str) -> int | None:
 def find_amounts(text: str) -> set[int]:
     """
     문장 안의 '...원' 금액을 모두 찾아 정수로 돌려준다.
-
     '원' 바로 앞의 숫자 표현 덩어리를 정규식으로 찾은 뒤,
     파싱되는 가장 긴 뒷부분만 사용한다.
     (예: "매월 13일 10만원" → "13일10만"은 실패, "10만"은 성공 → 100,000)
@@ -176,6 +177,7 @@ def find_amounts(text: str) -> set[int]:
 
     for match in AMOUNT_SPAN_PATTERN.finditer(text):
         phrase = match.group(0).strip()
+
 
         if not phrase:
             continue

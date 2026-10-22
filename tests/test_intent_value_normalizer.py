@@ -122,6 +122,9 @@ def test_generator_prompt_has_acceleration_and_format_rules():
     prompt = ClauseGenerator(api_key="test-key-not-real")._build_system_prompt()
     assert "즉시 변제" in prompt
     assert "50,000원" in prompt
+<<<<<<< HEAD
+    assert "실제 날짜로 계산" in prompt
+=======
     assert "실제 날짜로 계산" in prompt
 
 
@@ -148,3 +151,4 @@ def test_invalid_korean_number_is_not_amount(text):
 )
 def test_valid_unit_order_still_parses(text, expected):
     assert normalizer.find_amounts(text) == expected
+>>>>>>> dev
