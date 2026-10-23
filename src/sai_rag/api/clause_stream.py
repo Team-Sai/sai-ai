@@ -8,12 +8,17 @@ AI 특약 생성 스트리밍(SSE) 도우미.
 단계마다 알려주는 이벤트를 SSE(Server-Sent Events) 형식으로 흘려보낸다.
 
     event: progress   data: {"step": "analysis"}          단계 시작
+    event: delta      data: {"text": "새로 써진 조항 글자"}  생성 모델이 조항을 쓰는 중
     event: draft      data: {..., "suggestedClause": ...} 생성 직후 초안 (검증 전)
     event: final      data: {기존 응답과 같은 모양, "clauseRevised": bool}
     event: error      data: {"status": 400 | 500, "message": "..."}
 
 연결이 오래 조용하면 프록시/로드밸런서가 끊을 수 있어서
 일정 시간마다 SSE 주석(": keep-alive")을 보낸다.
+
+브라우저(또는 백엔드)가 연결을 끊으면 이 제너레이터가 닫히고,
+작업 스레드에 "그만" 신호를 보내 다음 단계로 넘어가지 않게 한다.
+(생성 중이면 모델 응답 받기를 멈춰서 토큰도 더 쓰지 않는다)
 """
 
 from __future__ import annotations
@@ -22,6 +27,8 @@ import json
 import queue
 import threading
 from typing import Any, Iterator
+
+from sai_rag.agent.clause_generator import ClauseGenerationCancelled
 
 _DONE = object()
 
@@ -61,6 +68,7 @@ def stream_clause_events(
     """
 
     events: queue.Queue = queue.Queue()
+    cancelled = threading.Event()
 
     def on_event(event: str, data: dict[str, Any]) -> None:
         events.put((event, data))
@@ -71,8 +79,12 @@ def stream_clause_events(
                 contract=contract,
                 message=message,
                 on_event=on_event,
+                should_stop=cancelled.is_set,
             )
             events.put(("final", result))
+        except ClauseGenerationCancelled:
+            # 받을 사람이 없으므로 이벤트를 보내지 않고 끝낸다.
+            print("[Clause Agent Stream] 클라이언트 연결 종료로 생성 중단")
         except ValueError as exc:
             events.put(("error", {"status": 400, "message": str(exc)}))
         except Exception as exc:  # noqa: BLE001 - 어떤 오류든 error 이벤트로 알린다
@@ -88,19 +100,56 @@ def stream_clause_events(
 
     threading.Thread(target=run, name="clause-stream", daemon=True).start()
 
+    try:
+        yield from _relay_events(events, heartbeat_seconds)
+    finally:
+        # 정상 종료든 연결 끊김(제너레이터 close)이든 작업 스레드에 그만하라고 알린다.
+        cancelled.set()
+
+
+def _relay_events(
+    events: queue.Queue,
+    heartbeat_seconds: float,
+) -> Iterator[str]:
     draft_clause: str | None = None
+    pending: list[Any] = []
 
     while True:
-        try:
-            item = events.get(timeout=heartbeat_seconds)
-        except queue.Empty:
-            yield ": keep-alive\n\n"
-            continue
+        if pending:
+            item = pending.pop(0)
+        else:
+            try:
+                item = events.get(timeout=heartbeat_seconds)
+            except queue.Empty:
+                yield ": keep-alive\n\n"
+                continue
 
         if item is _DONE:
             return
 
         event, data = item
+
+        if event == "delta":
+            # 글자 조각이 쌓여 있으면 한 이벤트로 합쳐 보낸다. (이벤트 수 줄이기)
+            text = data.get("text") or ""
+
+            while True:
+                try:
+                    following = events.get_nowait()
+                except queue.Empty:
+                    break
+
+                if following is not _DONE and following[0] == "delta":
+                    text += following[1].get("text") or ""
+                    continue
+
+                pending.append(following)
+                break
+
+            if text:
+                yield format_sse("delta", {"text": text})
+
+            continue
 
         if event == "draft":
             draft_clause = (data.get("suggestedClause") or "").strip()

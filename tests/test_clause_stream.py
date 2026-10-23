@@ -11,6 +11,7 @@ import os
 import sys
 import time
 import types
+import pytest
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key-not-real")
 
@@ -72,7 +73,7 @@ class FakeAgent:
         self.delay = delay
         self.received = None
 
-    def suggest_clause(self, *, contract, message, on_event=None):
+    def suggest_clause(self, *, contract, message, on_event=None, should_stop=None):
         self.received = (contract, message)
         on_event = on_event or (lambda event, data: None)
         on_event("progress", {"step": "analysis"})
@@ -276,3 +277,146 @@ def test_no_duplicate_post_routes():
     paths = _post_paths()
     assert len(paths) == len(set(paths))
 
+
+# ---------------------------------------------------------------
+# 2차: 조항 글자 스트리밍(delta)과 취소
+# ---------------------------------------------------------------
+
+class DeltaAgent:
+    """생성 중 조항 글자를 여러 조각으로 보내는 가짜 Agent."""
+
+    def suggest_clause(self, *, contract, message, on_event=None, should_stop=None):
+        on_event("progress", {"step": "generation"})
+        for piece in ["제1조 ", "채무자는 ", "언제든지 ", "상환할 수 있다."]:
+            on_event("delta", {"text": piece})
+        on_event("draft", {"title": "중도상환", "suggestedClause": DRAFT})
+        return {"suggestedClause": DRAFT, "validation": {"status": "PASS"}}
+
+
+def test_delta_events_are_merged_and_come_before_draft():
+    events, _ = run_stream(DeltaAgent())
+
+    names = [e for e, _ in events]
+    deltas = "".join(d["text"] for e, d in events if e == "delta")
+
+    assert deltas == "제1조 채무자는 언제든지 상환할 수 있다."
+    # 조각이 한꺼번에 쌓였으면 하나로 합쳐 보낸다 (최대 4개)
+    assert 1 <= names.count("delta") <= 4
+    assert names.index("draft") > max(i for i, n in enumerate(names) if n == "delta")
+    assert names[-1] == "final"
+
+
+class WaitingAgent:
+    """should_stop이 True가 될 때까지 기다리는 가짜 Agent."""
+
+    def __init__(self):
+        import threading
+
+        self.stopped = threading.Event()
+
+    def suggest_clause(self, *, contract, message, on_event=None, should_stop=None):
+        from sai_rag.agent.clause_generator import ClauseGenerationCancelled
+
+        on_event("progress", {"step": "analysis"})
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            if should_stop():
+                self.stopped.set()
+                raise ClauseGenerationCancelled()
+            time.sleep(0.01)
+        return {"suggestedClause": DRAFT}
+
+
+def test_closing_stream_tells_agent_to_stop():
+    agent = WaitingAgent()
+    stream = stream_clause_events(
+        clause_agent=agent,
+        contract=CONTRACT,
+        message="중도상환",
+        heartbeat_seconds=0.05,
+    )
+
+    assert next(stream).startswith("event: progress")
+
+    stream.close()  # 브라우저/백엔드가 연결을 끊은 상황
+
+    assert agent.stopped.wait(timeout=2)
+
+
+def _generator_with_events(events):
+    from sai_rag.agent.clause_generator import ClauseGenerator
+
+    class FakeStream:
+        def __init__(self):
+            self.closed = False
+
+        def __iter__(self):
+            return iter(events)
+
+        def close(self):
+            self.closed = True
+
+    fake_stream = FakeStream()
+    calls = []
+
+    class FakeResponses:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return fake_stream
+
+    generator = ClauseGenerator(api_key="test-key-not-real")
+    generator.client = types.SimpleNamespace(responses=FakeResponses())
+    return generator, fake_stream, calls
+
+
+def _delta(text):
+    return types.SimpleNamespace(type="response.output_text.delta", delta=text)
+
+
+def test_generator_streams_clause_text_while_writing_json():
+    full = json.dumps(
+        {
+            "suggestedClause": "제1조 채무자는\n언제든지 \"상환\"할 수 있다.",
+            "title": "중도상환",
+            "summary": "요약",
+            "warnings": [],
+            "unresolvedDecisions": [],
+        },
+        ensure_ascii=False,
+    )
+    # 이스케이프 중간에서 잘리도록 3글자씩 나눈다
+    events = [_delta(full[i:i + 3]) for i in range(0, len(full), 3)]
+    generator, fake_stream, calls = _generator_with_events(events)
+
+    received = []
+    result = generator.generate(
+        message="중도상환 자유롭게",
+        contract=CONTRACT,
+        issues=[{"type": "EARLY_REPAYMENT"}],
+        references=[],
+        on_delta=received.append,
+    )
+
+    assert calls[0]["stream"] is True
+    assert "".join(received) == "제1조 채무자는\n언제든지 \"상환\"할 수 있다."
+    assert result["suggestedClause"].startswith("제1조 채무자는")
+    assert fake_stream.closed
+
+
+def test_generator_stops_when_cancelled():
+    from sai_rag.agent.clause_generator import ClauseGenerationCancelled
+
+    events = [_delta('{"suggestedClause": "제1조'), _delta(" 채무자는")]
+    generator, fake_stream, _ = _generator_with_events(events)
+
+    with pytest.raises(ClauseGenerationCancelled):
+        generator.generate(
+            message="중도상환",
+            contract=CONTRACT,
+            issues=[],
+            references=[],
+            on_delta=lambda text: None,
+            should_stop=lambda: True,
+        )
+
+    assert fake_stream.closed  # 모델 응답 연결을 닫아 토큰을 더 쓰지 않는다
