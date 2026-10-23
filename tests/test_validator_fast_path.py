@@ -161,3 +161,21 @@ def test_invalid_max_output_tokens_keeps_other_options(monkeypatch):
     monkeypatch.setenv("OPENAI_VALIDATOR_REASONING_EFFORT", "low")
     monkeypatch.setenv("OPENAI_VALIDATOR_MAX_OUTPUT_TOKENS", "abc")
     assert openai_call_options("VALIDATOR") == {"reasoning": {"effort": "low"}}
+
+
+
+def test_cancel_stops_before_llm_validation(validator):
+    # 사용자가 취소했으면, LLM 검증(약 12초)이 필요한 조항이어도 부르기 전에 멈춘다
+    from sai_rag.agent.clause_generator import ClauseGenerationCancelled
+
+    with pytest.raises(ClauseGenerationCancelled):
+        validator.validate(
+            message=MESSAGE,
+            contract=CONTRACT,
+            issues=ISSUES,
+            generated={"suggestedClause": CONFLICT_CLAUSE, "warnings": [], "unresolvedDecisions": []},
+            references=REFERENCES,
+            should_stop=lambda: True,
+        )
+
+    assert validator.client.responses.calls == []

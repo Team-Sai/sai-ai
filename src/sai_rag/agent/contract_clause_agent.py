@@ -5,6 +5,7 @@ from time import perf_counter
 from typing import Any, Callable
 
 from sai_rag.agent.clause_generator import (
+    ClauseGenerationCancelled,
     ClauseGenerator,
 )
 from sai_rag.agent.clause_query_builder import (
@@ -102,13 +103,19 @@ class ContractClauseAgent:
         candidate_top_k: int | None = None,
         final_top_k: int | None = None,
         on_event: ClauseEventCallback | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         """
         on_event를 넘기면 단계가 진행될 때마다 이벤트를 알려준다.
         (스트리밍 API에서 사용, 기존 호출은 넘기지 않으므로 동작이 같다)
 
         - ("progress", {"step": "analysis" | "retrieval" | "generation" | "validation"})
+        - ("references", {"references": [...]})  생성에 쓰는 근거 법령 (생성 시작 직전)
+        - ("delta", {"text": 새로 써진 조항 글자})  생성 모델이 쓰는 중인 조항
         - ("draft", 생성 직후 조항 초안 - 검증 전)
+
+        should_stop()이 True가 되면(사용자가 취소) 다음 단계로 넘어가지 않고
+        ClauseGenerationCancelled를 던진다.
         """
 
         if not message.strip():
@@ -179,6 +186,8 @@ class ContractClauseAgent:
         # 1. Issue Analysis
         # ======================================
 
+        self._raise_if_stopped(should_stop)
+
         self._emit(
             on_event,
             "progress",
@@ -230,6 +239,8 @@ class ContractClauseAgent:
         # ======================================
         # 2. Query Planning
         # ======================================
+
+        self._raise_if_stopped(should_stop)
 
         self._emit(
             on_event,
@@ -421,6 +432,19 @@ class ContractClauseAgent:
             f"->{len(vector_candidates)}"
         )
 
+        # 검색이 끝나자마자 "이 법령들을 살펴보고 있어요"를 먼저 알린다.
+        # 순위 매기기(수 초)가 끝나면 실제로 쓸 법령으로 한 번 더 보낸다(7-1).
+        self._emit(
+            on_event,
+            "references",
+            {
+                "references": [
+                    self._to_public_reference(reference)
+                    for reference in vector_candidates
+                ],
+            },
+        )
+
         # ======================================
         # 5. Reranking
         # ======================================
@@ -513,8 +537,28 @@ class ContractClauseAgent:
         )
 
         # ======================================
+        # 7-1. References 이벤트 (생성 전에 근거 법령 먼저 알리기)
+        # ======================================
+        #
+        # 생성 모델이 글을 쓰기 전에 속으로 생각하는 시간(약 10초) 동안
+        # 화면에 "이 법령을 참고하고 있어요"를 먼저 보여줄 수 있게 한다.
+        # 이미 갖고 있는 값이라 추가 비용이 없다.
+
+        self._emit(
+            on_event,
+            "references",
+            {
+                "references": [
+                    self._to_public_reference(reference)
+                    for reference in generation_references
+                ],
+            },
+        )
+
+        # ======================================
         # 8. Clause Generation
         # ======================================
+        self._raise_if_stopped(should_stop)
 
         self._emit(
             on_event,
@@ -534,6 +578,19 @@ class ContractClauseAgent:
                 references=(
                     generation_references
                 ),
+                # 스트리밍 요청일 때만 조항 글자를 바로바로 넘긴다.
+                on_delta=(
+                    (
+                        lambda text: self._emit(
+                            on_event,
+                            "delta",
+                            {"text": text},
+                        )
+                    )
+                    if on_event is not None
+                    else None
+                ),
+                should_stop=should_stop,
             )
         )
 
@@ -583,6 +640,7 @@ class ContractClauseAgent:
                 ],
             },
         )
+        self._raise_if_stopped(should_stop)
 
         self._emit(
             on_event,
@@ -615,6 +673,7 @@ class ContractClauseAgent:
                 references=(
                     final_references
                 ),
+                should_stop=should_stop,
             )
         )
 
@@ -1052,6 +1111,13 @@ class ContractClauseAgent:
                 ],
             },
         }
+
+    @staticmethod
+    def _raise_if_stopped(
+        should_stop: Callable[[], bool] | None,
+    ) -> None:
+        if should_stop is not None and should_stop():
+            raise ClauseGenerationCancelled()
 
     @staticmethod
     def _emit(

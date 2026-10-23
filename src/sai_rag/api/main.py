@@ -26,6 +26,7 @@ from sai_rag.api.schemas import (
     ContractReviewRequest,
 )
 
+from sai_rag.api.warmup import warm_up
 from sai_rag.api.clause_stream import (
     stream_clause_events,
     to_agent_contract,
@@ -136,6 +137,16 @@ async def lifespan(
             ),
             reranker=reranker,
         )
+    )
+
+    # =========================================
+    # 준비 운동: 첫 사용자 요청이 느리지 않게 검색·순위 모델을 미리 돌림
+    # (OpenAI는 부르지 않아 비용 없음)
+    # =========================================
+
+    warm_up(
+        retriever=retriever,
+        reranker=reranker,
     )
 
     app.state.review_service = (

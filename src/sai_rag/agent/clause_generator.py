@@ -8,6 +8,10 @@ from typing import Any
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from sai_rag.agent.clause_delta import (
+    ClauseTextExtractor,
+)
+
 from sai_rag.agent.intent_value_normalizer import (
     today_kst,
 )
@@ -18,6 +22,12 @@ from sai_rag.agent.openai_options import (
 
 
 load_dotenv()
+
+
+class ClauseGenerationCancelled(Exception):
+    """
+    사용자가 요청을 취소해서(브라우저 연결 종료) 생성을 중간에 멈췄다.
+    """
 
 
 class ClauseGenerator:
@@ -211,7 +221,15 @@ class ClauseGenerator:
         contract: dict[str, Any],
         issues: list[dict[str, Any]],
         references: list[dict[str, Any]],
+        on_delta: Callable[[str], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
+        """
+        on_delta를 넘기면 모델 응답을 스트리밍으로 받아
+        조항(suggestedClause) 글자가 생기는 대로 on_delta(새 글자)를 부른다.
+        should_stop()이 True가 되면 모델 응답 받기를 멈추고 ClauseGenerationCancelled를 던진다.
+        (넘기지 않으면 기존처럼 한 번에 받는다)
+        """
         issue_types = [
             str(
                 issue.get(
@@ -284,28 +302,36 @@ class ClauseGenerator:
             perf_counter()
         )
 
-        response = (
-            self.client.responses.create(
-                model=self.model,
-                instructions=(
-                    system_prompt
-                ),
-                input=(
-                    user_prompt
-                ),
-                **openai_call_options("GENERATOR"),
+        if on_delta is None:
+            response = (
+                self.client.responses.create(
+                    model=self.model,
+                    instructions=(
+                        system_prompt
+                    ),
+                    input=(
+                        user_prompt
+                    ),
+                    **openai_call_options("GENERATOR"),
+                )
             )
-        )
+
+            raw_text = (
+                self._extract_text(
+                    response
+                )
+            )
+        else:
+            raw_text = self._generate_streaming(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                on_delta=on_delta,
+                should_stop=should_stop,
+            )
 
         api_elapsed = (
             perf_counter()
             - started_at
-        )
-
-        raw_text = (
-            self._extract_text(
-                response
-            )
         )
 
         print(
@@ -328,6 +354,99 @@ class ClauseGenerator:
                 message=message,
             )
         )
+
+    def _generate_streaming(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        on_delta: Callable[[str], None],
+        should_stop: Callable[[], bool] | None,
+    ) -> str:
+        """
+        모델 응답을 조각(delta)으로 받으면서 조항 글자를 바로 알려준다.
+        전체 JSON 원문을 돌려주므로 이후 파싱/정규화는 기존과 같다.
+        """
+
+        extractor = ClauseTextExtractor()
+        parts: list[str] = []
+        completed_text: str | None = None
+        first_delta_at: float | None = None
+        started_at = perf_counter()
+
+        stream = self.client.responses.create(
+            model=self.model,
+            instructions=system_prompt,
+            input=user_prompt,
+            stream=True,
+            **openai_call_options("GENERATOR"),
+        )
+
+        try:
+            for event in stream:
+                if should_stop is not None and should_stop():
+                    raise ClauseGenerationCancelled()
+
+                event_type = getattr(event, "type", "")
+
+                if event_type == "response.output_text.delta":
+                    delta = getattr(event, "delta", "") or ""
+                    parts.append(delta)
+
+                    new_text = extractor.feed(delta)
+
+                    if new_text:
+                        if first_delta_at is None:
+                            first_delta_at = perf_counter()
+
+                        try:
+                            on_delta(new_text)
+                        except ClauseGenerationCancelled:
+                            # 취소 신호는 삼키지 않고 그대로 올려 생성을 멈춘다.
+                            raise
+                        except Exception as exc:  # noqa: BLE001 - 미리보기 실패가 생성을 멈추면 안 됨
+                            print(
+                                "[ClauseGenerator][WARNING] "
+                                f"delta callback failed: {exc!r}"
+                            )
+
+                elif event_type == "response.completed":
+                    completed = getattr(event, "response", None)
+
+                    if completed is not None:
+                        completed_text = self._extract_text(completed)
+
+                elif event_type in (
+                    "response.failed",
+                    "response.incomplete",
+                    "error",
+                ):
+                    # incomplete: 최대 출력 길이 초과 등으로 중간에 끊긴 응답
+                    raise RuntimeError(
+                        f"OpenAI streaming failed: {event_type}"
+                    )
+        finally:
+            # 취소·오류 때 연결을 닫아야 모델이 더 이상 토큰을 만들지 않는다.
+            close = getattr(stream, "close", None)
+
+            if callable(close):
+                close()
+
+        if first_delta_at is not None:
+            print(
+                "[PERF][ClauseGenerator] "
+                f"first_clause_delta="
+                f"{(first_delta_at - started_at) * 1000:.0f}ms"
+            )
+
+        # 완료 이벤트 없이 스트림이 끝났다면 중간에 끊긴 응답이다.
+        # 잘린 JSON을 파싱·검증으로 넘기지 않고 오류로 처리한다.
+        if completed_text is None:
+            raise RuntimeError(
+                "OpenAI streaming ended without response.completed"
+            )
+
+        return completed_text or "".join(parts).strip()
 
     # ==========================================
     # Prompt
@@ -383,11 +502,12 @@ class ClauseGenerator:
 기준이 없으면 계약 시작일(startDate)로 한다.
 
 반드시 JSON 객체 하나만 출력한다.
+키는 아래 순서 그대로 출력한다. (suggestedClause를 가장 먼저 쓴다)
 
 {
+  "suggestedClause": "계약서에 들어갈 실제 조항",
   "title": "짧은 조항 제목",
   "summary": "조항 목적을 한두 문장으로 설명",
-  "suggestedClause": "계약서에 들어갈 실제 조항",
   "warnings": ["필요한 주의사항"],
   "unresolvedDecisions": [
     {
