@@ -8,6 +8,7 @@ AI 특약 생성 스트리밍(SSE) 도우미.
 단계마다 알려주는 이벤트를 SSE(Server-Sent Events) 형식으로 흘려보낸다.
 
     event: progress   data: {"step": "analysis"}          단계 시작
+    event: references data: {"references": [...]}          생성에 쓰는 근거 법령 (생성 직전)
     event: delta      data: {"text": "새로 써진 조항 글자"}  생성 모델이 조항을 쓰는 중
     event: draft      data: {..., "suggestedClause": ...} 생성 직후 초안 (검증 전)
     event: final      data: {기존 응답과 같은 모양, "clauseRevised": bool}

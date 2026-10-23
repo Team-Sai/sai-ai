@@ -401,6 +401,9 @@ class ClauseGenerator:
 
                         try:
                             on_delta(new_text)
+                        except ClauseGenerationCancelled:
+                            # 취소 신호는 삼키지 않고 그대로 올려 생성을 멈춘다.
+                            raise
                         except Exception as exc:  # noqa: BLE001 - 미리보기 실패가 생성을 멈추면 안 됨
                             print(
                                 "[ClauseGenerator][WARNING] "
@@ -413,7 +416,12 @@ class ClauseGenerator:
                     if completed is not None:
                         completed_text = self._extract_text(completed)
 
-                elif event_type in ("response.failed", "error"):
+                elif event_type in (
+                    "response.failed",
+                    "response.incomplete",
+                    "error",
+                ):
+                    # incomplete: 최대 출력 길이 초과 등으로 중간에 끊긴 응답
                     raise RuntimeError(
                         f"OpenAI streaming failed: {event_type}"
                     )
@@ -429,6 +437,13 @@ class ClauseGenerator:
                 "[PERF][ClauseGenerator] "
                 f"first_clause_delta="
                 f"{(first_delta_at - started_at) * 1000:.0f}ms"
+            )
+
+        # 완료 이벤트 없이 스트림이 끝났다면 중간에 끊긴 응답이다.
+        # 잘린 JSON을 파싱·검증으로 넘기지 않고 오류로 처리한다.
+        if completed_text is None:
+            raise RuntimeError(
+                "OpenAI streaming ended without response.completed"
             )
 
         return completed_text or "".join(parts).strip()

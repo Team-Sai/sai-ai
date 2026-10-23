@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any
+from typing import Any, Callable
 
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from sai_rag.agent.clause_generator import (
+    ClauseGenerationCancelled,
+)
 from sai_rag.agent.openai_options import (
     openai_call_options,
 )
@@ -282,9 +285,12 @@ class ClauseValidator:
         issues: list[dict[str, Any]],
         generated: dict[str, Any],
         references: list[dict[str, Any]],
+        should_stop: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         """
         Generator 결과를 검증한다.
+
+        should_stop()이 True면(사용자가 취소) LLM 검증을 부르기 직전에 멈춘다.
 
         정상적인 경우:
             deterministic validation만 수행한다.
@@ -868,6 +874,10 @@ class ClauseValidator:
                 ),
             )
         )
+
+        # 검증 LLM은 약 12초가 걸리므로, 부르기 직전에 한 번 더 취소 여부를 본다.
+        if should_stop is not None and should_stop():
+            raise ClauseGenerationCancelled()
 
         response = (
             self.client.responses.create(

@@ -373,6 +373,15 @@ def _delta(text):
     return types.SimpleNamespace(type="response.output_text.delta", delta=text)
 
 
+
+
+def _completed(text):
+    return types.SimpleNamespace(
+        type="response.completed",
+        response=types.SimpleNamespace(output_text=text),
+    )
+
+
 def test_generator_streams_clause_text_while_writing_json():
     full = json.dumps(
         {
@@ -386,6 +395,7 @@ def test_generator_streams_clause_text_while_writing_json():
     )
     # 이스케이프 중간에서 잘리도록 3글자씩 나눈다
     events = [_delta(full[i:i + 3]) for i in range(0, len(full), 3)]
+    events.append(_completed(full))
     generator, fake_stream, calls = _generator_with_events(events)
 
     received = []
@@ -420,3 +430,92 @@ def test_generator_stops_when_cancelled():
         )
 
     assert fake_stream.closed  # 모델 응답 연결을 닫아 토큰을 더 쓰지 않는다
+
+
+
+# ---------------------------------------------------------------
+# 리뷰 반영: 끊긴 응답, 취소 신호
+# ---------------------------------------------------------------
+
+def test_generator_rejects_stream_without_completed_event():
+    # 완료 이벤트 없이 끝난(중간에 끊긴) 응답은 잘린 JSON을 넘기지 않고 오류로 처리한다
+    events = [_delta('{"suggestedClause": "제1조 채무자는')]
+    generator, fake_stream, _ = _generator_with_events(events)
+
+    with pytest.raises(RuntimeError, match="response.completed"):
+        generator.generate(
+            message="중도상환",
+            contract=CONTRACT,
+            issues=[],
+            references=[],
+            on_delta=lambda text: None,
+        )
+
+    assert fake_stream.closed
+
+
+def test_generator_rejects_incomplete_response():
+    events = [
+        _delta('{"suggestedClause": "제1조'),
+        types.SimpleNamespace(type="response.incomplete"),
+    ]
+    generator, _, _ = _generator_with_events(events)
+
+    with pytest.raises(RuntimeError, match="incomplete"):
+        generator.generate(
+            message="중도상환",
+            contract=CONTRACT,
+            issues=[],
+            references=[],
+            on_delta=lambda text: None,
+        )
+
+
+def test_generator_does_not_swallow_cancel_from_delta_callback():
+    from sai_rag.agent.clause_generator import ClauseGenerationCancelled
+
+    def cancel(text):
+        raise ClauseGenerationCancelled()
+
+    events = [_delta('{"suggestedClause": "제1조'), _delta(" 채무자는")]
+    generator, fake_stream, _ = _generator_with_events(events)
+
+    with pytest.raises(ClauseGenerationCancelled):
+        generator.generate(
+            message="중도상환",
+            contract=CONTRACT,
+            issues=[],
+            references=[],
+            on_delta=cancel,
+        )
+
+    assert fake_stream.closed
+
+
+# ---------------------------------------------------------------
+# 근거 법령을 생성 전에 먼저 보낸다
+# ---------------------------------------------------------------
+
+class ReferencesAgent:
+    def suggest_clause(self, *, contract, message, on_event=None, should_stop=None):
+        on_event("progress", {"step": "retrieval"})
+        on_event(
+            "references",
+            {"references": [{"lawName": "민법", "articleNumber": "제468조"}]},
+        )
+        on_event("progress", {"step": "generation"})
+        on_event("delta", {"text": "제1조"})
+        on_event("draft", {"title": "중도상환", "suggestedClause": DRAFT})
+        return {"suggestedClause": DRAFT}
+
+
+def test_references_event_is_relayed_before_generation():
+    events, _ = run_stream(ReferencesAgent())
+
+    names = [e for e, _ in events]
+    references = [d for e, d in events if e == "references"]
+
+    assert references == [
+        {"references": [{"lawName": "민법", "articleNumber": "제468조"}]}
+    ]
+    assert names.index("references") < names.index("delta")

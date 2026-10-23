@@ -110,6 +110,7 @@ class ContractClauseAgent:
         (스트리밍 API에서 사용, 기존 호출은 넘기지 않으므로 동작이 같다)
 
         - ("progress", {"step": "analysis" | "retrieval" | "generation" | "validation"})
+        - ("references", {"references": [...]})  생성에 쓰는 근거 법령 (생성 시작 직전)
         - ("delta", {"text": 새로 써진 조항 글자})  생성 모델이 쓰는 중인 조항
         - ("draft", 생성 직후 조항 초안 - 검증 전)
 
@@ -431,6 +432,19 @@ class ContractClauseAgent:
             f"->{len(vector_candidates)}"
         )
 
+        # 검색이 끝나자마자 "이 법령들을 살펴보고 있어요"를 먼저 알린다.
+        # 순위 매기기(수 초)가 끝나면 실제로 쓸 법령으로 한 번 더 보낸다(7-1).
+        self._emit(
+            on_event,
+            "references",
+            {
+                "references": [
+                    self._to_public_reference(reference)
+                    for reference in vector_candidates
+                ],
+            },
+        )
+
         # ======================================
         # 5. Reranking
         # ======================================
@@ -520,6 +534,25 @@ class ContractClauseAgent:
             f"generation_references="
             f"{len(generation_references)}"
             f"/{len(final_references)}"
+        )
+
+        # ======================================
+        # 7-1. References 이벤트 (생성 전에 근거 법령 먼저 알리기)
+        # ======================================
+        #
+        # 생성 모델이 글을 쓰기 전에 속으로 생각하는 시간(약 10초) 동안
+        # 화면에 "이 법령을 참고하고 있어요"를 먼저 보여줄 수 있게 한다.
+        # 이미 갖고 있는 값이라 추가 비용이 없다.
+
+        self._emit(
+            on_event,
+            "references",
+            {
+                "references": [
+                    self._to_public_reference(reference)
+                    for reference in generation_references
+                ],
+            },
         )
 
         # ======================================
@@ -640,6 +673,7 @@ class ContractClauseAgent:
                 references=(
                     final_references
                 ),
+                should_stop=should_stop,
             )
         )
 
