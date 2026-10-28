@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import re
 from time import perf_counter
-from typing import Any
+from typing import Any, Callable
 
 from sai_rag.agent.clause_generator import (
+    ClauseGenerationCancelled,
     ClauseGenerator,
 )
 from sai_rag.agent.clause_query_builder import (
@@ -26,6 +27,7 @@ from sai_rag.retrieval.law_retriever import (
     LawRetriever,
 )
 
+ClauseEventCallback = Callable[[str, dict[str, Any]], None]
 
 class ContractClauseAgent:
     """
@@ -48,14 +50,14 @@ class ContractClauseAgent:
     Performance Strategy
 
     - Query별 Vector 후보: 8개
-    - Reranker 입력: 최대 10개
+    - Reranker 입력: 최대 5개
     - 사용자에게 반환할 근거: 최대 5개
     - Generator가 실제 읽을 근거: 상위 3개
     """
 
     DEFAULT_CANDIDATE_TOP_K = 8
 
-    MAX_RERANK_CANDIDATES = 10
+    MAX_RERANK_CANDIDATES = 5
 
     DEFAULT_FINAL_TOP_K = 5
 
@@ -100,7 +102,22 @@ class ContractClauseAgent:
         message: str,
         candidate_top_k: int | None = None,
         final_top_k: int | None = None,
+        on_event: ClauseEventCallback | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
+        """
+        on_event를 넘기면 단계가 진행될 때마다 이벤트를 알려준다.
+        (스트리밍 API에서 사용, 기존 호출은 넘기지 않으므로 동작이 같다)
+
+        - ("progress", {"step": "analysis" | "retrieval" | "generation" | "validation"})
+        - ("references", {"references": [...]})  생성에 쓰는 근거 법령 (생성 시작 직전)
+        - ("delta", {"text": 새로 써진 조항 글자})  생성 모델이 쓰는 중인 조항
+        - ("draft", 생성 직후 조항 초안 - 검증 전)
+
+        should_stop()이 True가 되면(사용자가 취소) 다음 단계로 넘어가지 않고
+        ClauseGenerationCancelled를 던진다.
+        """
+
         if not message.strip():
             raise ValueError(
                 "특약 요청 내용을 입력해주세요."
@@ -169,6 +186,14 @@ class ContractClauseAgent:
         # 1. Issue Analysis
         # ======================================
 
+        self._raise_if_stopped(should_stop)
+
+        self._emit(
+            on_event,
+            "progress",
+            {"step": "analysis"},
+        )
+
         started_at = (
             perf_counter()
         )
@@ -194,8 +219,34 @@ class ContractClauseAgent:
         )
 
         # ======================================
+        # 1-1. Scope Guard
+        # ======================================
+        # 계약 특약과 관계없는 요청(예: 요리법)은
+        # 법령 검색·리랭킹·생성을 하지 않고 바로 안내한다.
+        if not issues:
+            print(
+                "[PERF][ClauseAgent] "
+                "out_of_scope=true -> skip retrieval/rerank/generation"
+            )
+
+            return self._out_of_scope_response(
+                message=message,
+                issue_analysis_ms=(
+                    performance["issue_analysis"] * 1000
+                ),
+            )
+
+        # ======================================
         # 2. Query Planning
         # ======================================
+
+        self._raise_if_stopped(should_stop)
+
+        self._emit(
+            on_event,
+            "progress",
+            {"step": "retrieval"},
+        )
 
         started_at = (
             perf_counter()
@@ -381,6 +432,19 @@ class ContractClauseAgent:
             f"->{len(vector_candidates)}"
         )
 
+        # 검색이 끝나자마자 "이 법령들을 살펴보고 있어요"를 먼저 알린다.
+        # 순위 매기기(수 초)가 끝나면 실제로 쓸 법령으로 한 번 더 보낸다(7-1).
+        self._emit(
+            on_event,
+            "references",
+            {
+                "references": [
+                    self._to_public_reference(reference)
+                    for reference in vector_candidates
+                ],
+            },
+        )
+
         # ======================================
         # 5. Reranking
         # ======================================
@@ -473,8 +537,34 @@ class ContractClauseAgent:
         )
 
         # ======================================
+        # 7-1. References 이벤트 (생성 전에 근거 법령 먼저 알리기)
+        # ======================================
+        #
+        # 생성 모델이 글을 쓰기 전에 속으로 생각하는 시간(약 10초) 동안
+        # 화면에 "이 법령을 참고하고 있어요"를 먼저 보여줄 수 있게 한다.
+        # 이미 갖고 있는 값이라 추가 비용이 없다.
+
+        self._emit(
+            on_event,
+            "references",
+            {
+                "references": [
+                    self._to_public_reference(reference)
+                    for reference in generation_references
+                ],
+            },
+        )
+
+        # ======================================
         # 8. Clause Generation
         # ======================================
+        self._raise_if_stopped(should_stop)
+
+        self._emit(
+            on_event,
+            "progress",
+            {"step": "generation"},
+        )
 
         started_at = (
             perf_counter()
@@ -488,6 +578,19 @@ class ContractClauseAgent:
                 references=(
                     generation_references
                 ),
+                # 스트리밍 요청일 때만 조항 글자를 바로바로 넘긴다.
+                on_delta=(
+                    (
+                        lambda text: self._emit(
+                            on_event,
+                            "delta",
+                            {"text": text},
+                        )
+                    )
+                    if on_event is not None
+                    else None
+                ),
+                should_stop=should_stop,
             )
         )
 
@@ -517,6 +620,35 @@ class ContractClauseAgent:
         )
 
         # ======================================
+        # 8-1. Draft 이벤트 (검증 전 조항 초안)
+        # ======================================
+
+        self._emit(
+            on_event,
+            "draft",
+            {
+                "title": generated.get("title"),
+                "summary": generated.get("summary"),
+                "suggestedClause": generated.get("suggestedClause"),
+                "warnings": generated.get("warnings") or [],
+                "unresolvedDecisions": (
+                    generated.get("unresolvedDecisions") or []
+                ),
+                "references": [
+                    self._to_public_reference(reference)
+                    for reference in final_references
+                ],
+            },
+        )
+        self._raise_if_stopped(should_stop)
+
+        self._emit(
+            on_event,
+            "progress",
+            {"step": "validation"},
+        )
+
+        # ======================================
         # 9. Validation
         # ======================================
         #
@@ -541,6 +673,7 @@ class ContractClauseAgent:
                 references=(
                     final_references
                 ),
+                should_stop=should_stop,
             )
         )
 
@@ -976,6 +1109,90 @@ class ContractClauseAgent:
                     for candidate
                     in final_references
                 ],
+            },
+        }
+
+    @staticmethod
+    def _raise_if_stopped(
+        should_stop: Callable[[], bool] | None,
+    ) -> None:
+        if should_stop is not None and should_stop():
+            raise ClauseGenerationCancelled()
+
+    @staticmethod
+    def _emit(
+        on_event: ClauseEventCallback | None,
+        event: str,
+        data: dict[str, Any],
+    ) -> None:
+        """
+        이벤트를 알린다. 받는 쪽에서 오류가 나도 특약 생성은 계속한다.
+        """
+
+        if on_event is None:
+            return
+
+        try:
+            on_event(event, data)
+        except Exception as exc:  # noqa: BLE001 - 이벤트 전달 실패가 생성을 멈추면 안 됨
+            print(
+                "[ClauseAgent][WARNING] "
+                f"event callback failed: {event} {exc!r}"
+            )
+
+    OUT_OF_SCOPE_GUIDE = (
+        "사이원장 AI는 금전소비대차 계약서의 특약 작성만 도와드릴 수 있어요. "
+        "이자, 상환 방법, 연체, 중도상환, 보증처럼 "
+        "계약 조건에 대해 요청해 주세요."
+    )
+
+    def _out_of_scope_response(
+        self,
+        message: str,
+        issue_analysis_ms: float,
+    ) -> dict[str, Any]:
+        """
+        계약 특약과 무관한 요청에 대한 응답.
+
+        기존 응답과 같은 필드를 유지해서 백엔드/프론트가
+        그대로 받을 수 있게 한다.
+        - suggestedClause는 비워 두고
+        - validation.isSafeToSuggest=false + warnings로 사유를 전달한다.
+          (백엔드 RagApiClient는 "조항 없음 + 거절 + 사유 있음"을 정상 응답으로 처리)
+        """
+        return {
+            "message": message,
+            "issues": [],
+            "title": "요청 범위 밖이에요",
+            "summary": self.OUT_OF_SCOPE_GUIDE,
+            "suggestedClause": None,
+            "warnings": [
+                self.OUT_OF_SCOPE_GUIDE,
+            ],
+            "validation": {
+                "status": "OUT_OF_SCOPE",
+                "isSafeToSuggest": False,
+                "checks": [
+                    {
+                        "type": "SCOPE",
+                        "status": "REJECTED",
+                        "message": (
+                            "금전소비대차 계약 특약과 관련 없는 요청입니다."
+                        ),
+                    }
+                ],
+            },
+            "references": [],
+            "unresolvedDecisions": [],
+            "debug": {
+                "pipelineVersion": "V5.4",
+                "outOfScope": True,
+                "performance": {
+                    "issueAnalysisMs": round(
+                        issue_analysis_ms,
+                        2,
+                    ),
+                },
             },
         }
 

@@ -9,6 +9,10 @@ from fastapi import (
     Request,
 )
 
+from fastapi.responses import (
+    StreamingResponse,
+)
+
 from sai_rag.agent.clause_generator import (
     ClauseGenerator,
 )
@@ -20,6 +24,12 @@ from sai_rag.agent.contract_clause_agent import (
 from sai_rag.api.schemas import (
     ContractClauseSuggestionRequest,
     ContractReviewRequest,
+)
+
+from sai_rag.api.warmup import warm_up
+from sai_rag.api.clause_stream import (
+    stream_clause_events,
+    to_agent_contract,
 )
 
 from sai_rag.generation.factory import (
@@ -129,6 +139,16 @@ async def lifespan(
         )
     )
 
+    # =========================================
+    # 준비 운동: 첫 사용자 요청이 느리지 않게 검색·순위 모델을 미리 돌림
+    # (OpenAI는 부르지 않아 비용 없음)
+    # =========================================
+
+    warm_up(
+        retriever=retriever,
+        reranker=reranker,
+    )
+
     app.state.review_service = (
         review_service
     )
@@ -202,7 +222,6 @@ def health():
         },
     }
 
-
 @app.post(
     "/rag/contracts/review"
 )
@@ -248,7 +267,6 @@ def review_contract(
             ),
         ) from exc
 
-
 @app.post(
     "/rag/contracts/clause-suggestions"
 )
@@ -256,6 +274,85 @@ def suggest_contract_clause(
     request: Request,
     body: ContractClauseSuggestionRequest,
 ):
+    try:
+        clause_agent = (
+            request.app.state
+            .clause_agent
+        )
+
+        contract = to_agent_contract(
+            body.contract.model_dump()
+        )
+
+        # 후보 수 / 최종 근거 수는
+        # ContractClauseAgent 내부 정책을 사용한다.
+
+        return (
+            clause_agent.suggest_clause(
+                contract=contract,
+                message=(
+                    body.message
+                ),
+            )
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    except Exception as exc:
+        print(
+            "[Clause Agent Error]",
+            repr(exc),
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "AI 특약 생성 중 "
+                "오류가 발생했습니다."
+            ),
+        ) from exc
+
+
+@app.post(
+    "/rag/contracts/clause-suggestions/stream"
+)
+def suggest_contract_clause_stream(
+    request: Request,
+    body: ContractClauseSuggestionRequest,
+):
+    """
+    특약 생성 진행 상황을 SSE로 보낸다.
+
+    progress → draft(생성 직후 초안) → final(기존 응답과 같은 모양 + clauseRevised)
+    오류가 나면 error 이벤트를 보낸다.
+    """
+
+    clause_agent = (
+        request.app.state
+        .clause_agent
+    )
+
+    contract = to_agent_contract(
+        body.contract.model_dump()
+    )
+
+    return StreamingResponse(
+        stream_clause_events(
+            clause_agent=clause_agent,
+            contract=contract,
+            message=body.message,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
     try:
         clause_agent = (
             request.app.state
