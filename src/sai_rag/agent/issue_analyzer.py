@@ -9,6 +9,10 @@ from sai_rag.agent.contract_context_formatter import (
     ContractContextFormatter,
 )
 
+from sai_rag.agent.openai_options import (
+    openai_call_options,
+)
+
 
 load_dotenv()
 
@@ -175,6 +179,7 @@ OTHER
         response = self.client.responses.create(
             model=self.model,
             input=prompt,
+            **openai_call_options("ANALYZER"),
         )
 
         output = response.output_text.strip()

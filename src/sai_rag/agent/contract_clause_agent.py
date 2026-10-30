@@ -167,7 +167,7 @@ class ContractClauseAgent:
 
         print(
             "[PERF][ClauseAgent] "
-            f"message={message.strip()}"
+            f"message_chars={len(message.strip())}"
         )
 
         print(
