@@ -43,9 +43,11 @@ class FakeResponses:
     def __init__(self, output: dict):
         self.output = output
         self.last_prompt = None
+        self.last_kwargs = None
 
-    def create(self, model, input):  # noqa: A002 - OpenAI SDK 인자 이름
+    def create(self, model, input, **kwargs):  # noqa: A002 - OpenAI SDK 인자 이름
         self.last_prompt = input
+        self.last_kwargs = kwargs
         return types.SimpleNamespace(output_text=json.dumps(self.output, ensure_ascii=False))
 
 
@@ -96,6 +98,21 @@ def test_prompt_contains_scope_rule():
     analyzer.analyze(CONTRACT, "김치찌개 만드는 법")
     assert '"inScope": false' in fake.last_prompt
     assert "요리" in fake.last_prompt
+
+
+def test_analyzer_passes_call_options_to_llm(monkeypatch):
+    monkeypatch.setenv("OPENAI_ANALYZER_REASONING_EFFORT", "low")
+    analyzer, fake = make_analyzer({"inScope": True, "issues": []})
+    analyzer.analyze(CONTRACT, "연체 시 지연이자 특약 넣어줘")
+    assert fake.last_kwargs["reasoning"] == {"effort": "low"}
+
+
+def test_analyzer_sends_no_options_when_env_empty(monkeypatch):
+    monkeypatch.delenv("OPENAI_ANALYZER_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("OPENAI_ANALYZER_MAX_OUTPUT_TOKENS", raising=False)
+    analyzer, fake = make_analyzer({"inScope": True, "issues": []})
+    analyzer.analyze(CONTRACT, "연체 시 지연이자 특약 넣어줘")
+    assert fake.last_kwargs == {}
 
 
 # ---------------------------------------------------------------
