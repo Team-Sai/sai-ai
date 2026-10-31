@@ -182,41 +182,14 @@ class ContractClauseAgent:
             f"{self.GENERATOR_REFERENCE_TOP_K}"
         )
 
-        # ======================================
-        # 1. Issue Analysis
-        # ======================================
-
-        self._raise_if_stopped(should_stop)
-
-        self._emit(
-            on_event,
-            "progress",
-            {"step": "analysis"},
+        analyzed = self.analyze_issues(
+            contract=contract,
+            message=message,
+            on_event=on_event,
+            should_stop=should_stop,
         )
-
-        started_at = (
-            perf_counter()
-        )
-
-        issues = (
-            self.issue_analyzer.analyze(
-                contract=contract,
-                message=message,
-            )
-        )
-
-        performance[
-            "issue_analysis"
-        ] = (
-            perf_counter()
-            - started_at
-        )
-
-        print(
-            "[PERF][ClauseAgent] "
-            f"issue_analysis="
-            f"{performance['issue_analysis'] * 1000:.0f}ms"
-        )
+        issues = analyzed["issues"]
+        performance.update(analyzed["performance"])
 
         # ======================================
         # 1-1. Scope Guard
@@ -236,467 +209,37 @@ class ContractClauseAgent:
                 ),
             )
 
-        # ======================================
-        # 2. Query Planning
-        # ======================================
-
-        self._raise_if_stopped(should_stop)
-
-        self._emit(
-            on_event,
-            "progress",
-            {"step": "retrieval"},
+        found = self.find_references(
+            contract=contract,
+            message=message,
+            issues=issues,
+            candidate_top_k=resolved_candidate_top_k,
+            final_top_k=resolved_final_top_k,
+            on_event=on_event,
+            should_stop=should_stop,
         )
+        search_plans = found["search_plans"]
+        retrieval_timings = found["retrieval_timings"]
+        collected_results = found["collected_results"]
+        vector_candidates = found["vector_candidates"]
+        reranked_candidates = found["reranked_candidates"]
+        final_references = found["final_references"]
+        generation_references = found["generation_references"]
+        performance.update(found["performance"])
 
-        started_at = (
-            perf_counter()
+        written = self.write_and_validate(
+            contract=contract,
+            message=message,
+            issues=issues,
+            final_references=final_references,
+            generation_references=generation_references,
+            on_event=on_event,
+            should_stop=should_stop,
         )
-
-        search_plans = (
-            self.query_builder.build_queries(
-                contract=contract,
-                message=message,
-                issues=issues,
-            )
-        )
-
-        performance[
-            "query_planning"
-        ] = (
-            perf_counter()
-            - started_at
-        )
-
-        print(
-            "[PERF][ClauseAgent] "
-            f"query_planning="
-            f"{performance['query_planning'] * 1000:.0f}ms "
-            f"plans={len(search_plans)}"
-        )
-
-        # ======================================
-        # 3. Vector Retrieval
-        # ======================================
-
-        collected_results: list[
-            dict[str, Any]
-        ] = []
-
-        retrieval_timings: list[
-            dict[str, Any]
-        ] = []
-
-        retrieval_started_at = (
-            perf_counter()
-        )
-
-        for index, plan in enumerate(
-            search_plans,
-            start=1,
-        ):
-            query = str(
-                plan.get(
-                    "query",
-                    "",
-                )
-            ).strip()
-
-            if not query:
-                continue
-
-            law_names = (
-                plan.get(
-                    "lawNames"
-                )
-            )
-
-            issue_type = (
-                plan.get(
-                    "issueType"
-                )
-            )
-
-            single_started_at = (
-                perf_counter()
-            )
-
-            results = (
-                self.retriever.retrieve(
-                    question=query,
-                    top_k=(
-                        resolved_candidate_top_k
-                    ),
-                    law_names=(
-                        law_names
-                    ),
-                )
-            )
-
-            elapsed = (
-                perf_counter()
-                - single_started_at
-            )
-
-            retrieval_timings.append(
-                {
-                    "index": index,
-                    "issueType": issue_type,
-                    "query": query,
-                    "lawNames": law_names,
-                    "resultCount": len(
-                        results
-                    ),
-                    "elapsedMs": round(
-                        elapsed * 1000,
-                        2,
-                    ),
-                }
-            )
-
-            print(
-                "[PERF][ClauseAgent] "
-                f"retrieval[{index}]="
-                f"{elapsed * 1000:.0f}ms "
-                f"issue={issue_type} "
-                f"results={len(results)}"
-            )
-
-            for result in results:
-                collected_results.append(
-                    {
-                        **result,
-                        "_issue_type": (
-                            issue_type
-                        ),
-                        "_query": (
-                            query
-                        ),
-                        "_rerank_query": (
-                            f"{message.strip()} "
-                            f"{query}"
-                        ),
-                    }
-                )
-
-        performance[
-            "retrieval"
-        ] = (
-            perf_counter()
-            - retrieval_started_at
-        )
-
-        print(
-            "[PERF][ClauseAgent] "
-            f"retrieval_total="
-            f"{performance['retrieval'] * 1000:.0f}ms "
-            f"raw_candidates="
-            f"{len(collected_results)}"
-        )
-
-        # ======================================
-        # 4. Candidate Merge
-        # ======================================
-
-        started_at = (
-            perf_counter()
-        )
-
-        vector_candidates = (
-            self._merge_vector_candidates(
-                collected_results,
-                max_results=(
-                    self.MAX_RERANK_CANDIDATES
-                ),
-            )
-        )
-
-        performance[
-            "candidate_merge"
-        ] = (
-            perf_counter()
-            - started_at
-        )
-
-        print(
-            "[PERF][ClauseAgent] "
-            f"candidate_merge="
-            f"{performance['candidate_merge'] * 1000:.0f}ms "
-            f"merged_candidates="
-            f"{len(vector_candidates)}"
-        )
-
-        print(
-            "[PERF][ClauseAgent] "
-            f"rerank_input_reduction="
-            f"{len(collected_results)}"
-            f"->{len(vector_candidates)}"
-        )
-
-        # 검색이 끝나자마자 "이 법령들을 살펴보고 있어요"를 먼저 알린다.
-        # 순위 매기기(수 초)가 끝나면 실제로 쓸 법령으로 한 번 더 보낸다(7-1).
-        self._emit(
-            on_event,
-            "references",
-            {
-                "references": [
-                    self._to_public_reference(reference)
-                    for reference in vector_candidates
-                ],
-            },
-        )
-
-        # ======================================
-        # 5. Reranking
-        # ======================================
-
-        started_at = (
-            perf_counter()
-        )
-
-        if vector_candidates:
-            reranked_candidates = (
-                self.reranker.rerank(
-                    candidates=(
-                        vector_candidates
-                    ),
-                    top_k=len(
-                        vector_candidates
-                    ),
-                )
-            )
-        else:
-            reranked_candidates = []
-
-        performance[
-            "reranking"
-        ] = (
-            perf_counter()
-            - started_at
-        )
-
-        print(
-            "[PERF][ClauseAgent] "
-            f"reranking="
-            f"{performance['reranking'] * 1000:.0f}ms "
-            f"candidates="
-            f"{len(vector_candidates)}"
-        )
-
-        # ======================================
-        # 6. Hybrid Ranking
-        # ======================================
-
-        started_at = (
-            perf_counter()
-        )
-
-        if reranked_candidates:
-            final_references = (
-                self.hybrid_ranker.rank(
-                    candidates=(
-                        reranked_candidates
-                    ),
-                    top_k=(
-                        resolved_final_top_k
-                    ),
-                )
-            )
-        else:
-            final_references = []
-
-        performance[
-            "hybrid_ranking"
-        ] = (
-            perf_counter()
-            - started_at
-        )
-
-        print(
-            "[PERF][ClauseAgent] "
-            f"hybrid_ranking="
-            f"{performance['hybrid_ranking'] * 1000:.0f}ms "
-            f"final_references="
-            f"{len(final_references)}"
-        )
-
-        # ======================================
-        # 7. Generator Context Pruning
-        # ======================================
-
-        generation_references = (
-            final_references[
-                :self.GENERATOR_REFERENCE_TOP_K
-            ]
-        )
-
-        print(
-            "[PERF][ClauseAgent] "
-            f"generation_references="
-            f"{len(generation_references)}"
-            f"/{len(final_references)}"
-        )
-
-        # ======================================
-        # 7-1. References 이벤트 (생성 전에 근거 법령 먼저 알리기)
-        # ======================================
-        #
-        # 생성 모델이 글을 쓰기 전에 속으로 생각하는 시간(약 10초) 동안
-        # 화면에 "이 법령을 참고하고 있어요"를 먼저 보여줄 수 있게 한다.
-        # 이미 갖고 있는 값이라 추가 비용이 없다.
-
-        self._emit(
-            on_event,
-            "references",
-            {
-                "references": [
-                    self._to_public_reference(reference)
-                    for reference in generation_references
-                ],
-            },
-        )
-
-        # ======================================
-        # 8. Clause Generation
-        # ======================================
-        self._raise_if_stopped(should_stop)
-
-        self._emit(
-            on_event,
-            "progress",
-            {"step": "generation"},
-        )
-
-        started_at = (
-            perf_counter()
-        )
-
-        generated = (
-            self.generator.generate(
-                contract=contract,
-                message=message,
-                issues=issues,
-                references=(
-                    generation_references
-                ),
-                # 스트리밍 요청일 때만 조항 글자를 바로바로 넘긴다.
-                on_delta=(
-                    (
-                        lambda text: self._emit(
-                            on_event,
-                            "delta",
-                            {"text": text},
-                        )
-                    )
-                    if on_event is not None
-                    else None
-                ),
-                should_stop=should_stop,
-            )
-        )
-
-        performance[
-            "generation"
-        ] = (
-            perf_counter()
-            - started_at
-        )
-
-        print(
-            "[PERF][ClauseAgent] "
-            f"generation="
-            f"{performance['generation'] * 1000:.0f}ms"
-        )
-
-        print(
-            "[DEBUG][ClauseAgent] "
-            f"generator_warnings="
-            f"{generated.get('warnings', [])}"
-        )
-
-        print(
-            "[DEBUG][ClauseAgent] "
-            f"unresolved_decisions="
-            f"{generated.get('unresolvedDecisions', [])}"
-        )
-
-        # ======================================
-        # 8-1. Draft 이벤트 (검증 전 조항 초안)
-        # ======================================
-
-        self._emit(
-            on_event,
-            "draft",
-            {
-                "title": generated.get("title"),
-                "summary": generated.get("summary"),
-                "suggestedClause": generated.get("suggestedClause"),
-                "warnings": generated.get("warnings") or [],
-                "unresolvedDecisions": (
-                    generated.get("unresolvedDecisions") or []
-                ),
-                "references": [
-                    self._to_public_reference(reference)
-                    for reference in final_references
-                ],
-            },
-        )
-        self._raise_if_stopped(should_stop)
-
-        self._emit(
-            on_event,
-            "progress",
-            {"step": "validation"},
-        )
-
-        # ======================================
-        # 9. Validation
-        # ======================================
-        #
-        # Validator에는 최종 5개 전체를 전달한다.
-        #
-        # 평소에는 deterministic validation으로
-        # 즉시 통과하지만,
-        # LLM Validator가 필요한 예외 상황에서는
-        # 더 넓은 근거를 확인할 수 있다.
-        # ======================================
-
-        started_at = (
-            perf_counter()
-        )
-
-        validation = (
-            self.validator.validate(
-                contract=contract,
-                message=message,
-                issues=issues,
-                generated=generated,
-                references=(
-                    final_references
-                ),
-                should_stop=should_stop,
-            )
-        )
-
-        performance[
-            "validation"
-        ] = (
-            perf_counter()
-            - started_at
-        )
-
-        validator_mode = str(
-            validation.get(
-                "validatorMode",
-                "UNKNOWN",
-            )
-        )
-
-        print(
-            "[PERF][ClauseAgent] "
-            f"validation="
-            f"{performance['validation'] * 1000:.0f}ms "
-            f"mode={validator_mode}"
-        )
+        generated = written["generated"]
+        validation = written["validation"]
+        validator_mode = written["validator_mode"]
+        performance.update(written["performance"])
 
         # ======================================
         # 10. Final Result
@@ -1110,6 +653,566 @@ class ContractClauseAgent:
                     in final_references
                 ],
             },
+        }
+
+    def analyze_issues(
+        self,
+        contract: dict[str, Any],
+        message: str,
+        on_event: ClauseEventCallback | None = None,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
+        """① 쟁점 분석. 쟁점이 비면 범위 밖 요청이다."""
+
+        performance: dict[str, float] = {}
+
+        # ======================================
+        # 1. Issue Analysis
+        # ======================================
+
+        self._raise_if_stopped(should_stop)
+
+        self._emit(
+            on_event,
+            "progress",
+            {"step": "analysis"},
+        )
+
+        started_at = (
+            perf_counter()
+        )
+
+        issues = (
+            self.issue_analyzer.analyze(
+                contract=contract,
+                message=message,
+            )
+        )
+
+        performance[
+            "issue_analysis"
+        ] = (
+            perf_counter()
+            - started_at
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"issue_analysis="
+            f"{performance['issue_analysis'] * 1000:.0f}ms"
+        )
+
+        return {
+            "issues": issues,
+            "performance": performance
+        }
+
+    def find_references(
+        self,
+        contract: dict[str, Any],
+        message: str,
+        issues: list[dict[str, Any]],
+        candidate_top_k: int,
+        final_top_k: int,
+        on_event: ClauseEventCallback | None = None,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
+        """② 검색 + ③ 순위. 생성에 쓸 근거 법령까지 고른다."""
+
+        performance: dict[str, float] = {}
+
+        # ======================================
+        # 2. Query Planning
+        # ======================================
+
+        self._raise_if_stopped(should_stop)
+
+        self._emit(
+            on_event,
+            "progress",
+            {"step": "retrieval"},
+        )
+
+        started_at = (
+            perf_counter()
+        )
+
+        search_plans = (
+            self.query_builder.build_queries(
+                contract=contract,
+                message=message,
+                issues=issues,
+            )
+        )
+
+        performance[
+            "query_planning"
+        ] = (
+            perf_counter()
+            - started_at
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"query_planning="
+            f"{performance['query_planning'] * 1000:.0f}ms "
+            f"plans={len(search_plans)}"
+        )
+
+        # ======================================
+        # 3. Vector Retrieval
+        # ======================================
+
+        collected_results: list[
+            dict[str, Any]
+        ] = []
+
+        retrieval_timings: list[
+            dict[str, Any]
+        ] = []
+
+        retrieval_started_at = (
+            perf_counter()
+        )
+
+        for index, plan in enumerate(
+            search_plans,
+            start=1,
+        ):
+            query = str(
+                plan.get(
+                    "query",
+                    "",
+                )
+            ).strip()
+
+            if not query:
+                continue
+
+            law_names = (
+                plan.get(
+                    "lawNames"
+                )
+            )
+
+            issue_type = (
+                plan.get(
+                    "issueType"
+                )
+            )
+
+            single_started_at = (
+                perf_counter()
+            )
+
+            results = (
+                self.retriever.retrieve(
+                    question=query,
+                    top_k=(
+                        candidate_top_k
+                    ),
+                    law_names=(
+                        law_names
+                    ),
+                )
+            )
+
+            elapsed = (
+                perf_counter()
+                - single_started_at
+            )
+
+            retrieval_timings.append(
+                {
+                    "index": index,
+                    "issueType": issue_type,
+                    "query": query,
+                    "lawNames": law_names,
+                    "resultCount": len(
+                        results
+                    ),
+                    "elapsedMs": round(
+                        elapsed * 1000,
+                        2,
+                    ),
+                }
+            )
+
+            print(
+                "[PERF][ClauseAgent] "
+                f"retrieval[{index}]="
+                f"{elapsed * 1000:.0f}ms "
+                f"issue={issue_type} "
+                f"results={len(results)}"
+            )
+
+            for result in results:
+                collected_results.append(
+                    {
+                        **result,
+                        "_issue_type": (
+                            issue_type
+                        ),
+                        "_query": (
+                            query
+                        ),
+                        "_rerank_query": (
+                            f"{message.strip()} "
+                            f"{query}"
+                        ),
+                    }
+                )
+
+        performance[
+            "retrieval"
+        ] = (
+            perf_counter()
+            - retrieval_started_at
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"retrieval_total="
+            f"{performance['retrieval'] * 1000:.0f}ms "
+            f"raw_candidates="
+            f"{len(collected_results)}"
+        )
+
+        # ======================================
+        # 4. Candidate Merge
+        # ======================================
+
+        started_at = (
+            perf_counter()
+        )
+
+        vector_candidates = (
+            self._merge_vector_candidates(
+                collected_results,
+                max_results=(
+                    self.MAX_RERANK_CANDIDATES
+                ),
+            )
+        )
+
+        performance[
+            "candidate_merge"
+        ] = (
+            perf_counter()
+            - started_at
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"candidate_merge="
+            f"{performance['candidate_merge'] * 1000:.0f}ms "
+            f"merged_candidates="
+            f"{len(vector_candidates)}"
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"rerank_input_reduction="
+            f"{len(collected_results)}"
+            f"->{len(vector_candidates)}"
+        )
+
+        # 검색이 끝나자마자 "이 법령들을 살펴보고 있어요"를 먼저 알린다.
+        # 순위 매기기(수 초)가 끝나면 실제로 쓸 법령으로 한 번 더 보낸다(7-1).
+        self._emit(
+            on_event,
+            "references",
+            {
+                "references": [
+                    self._to_public_reference(reference)
+                    for reference in vector_candidates
+                ],
+            },
+        )
+
+        # ======================================
+        # 5. Reranking
+        # ======================================
+
+        started_at = (
+            perf_counter()
+        )
+
+        if vector_candidates:
+            reranked_candidates = (
+                self.reranker.rerank(
+                    candidates=(
+                        vector_candidates
+                    ),
+                    top_k=len(
+                        vector_candidates
+                    ),
+                )
+            )
+        else:
+            reranked_candidates = []
+
+        performance[
+            "reranking"
+        ] = (
+            perf_counter()
+            - started_at
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"reranking="
+            f"{performance['reranking'] * 1000:.0f}ms "
+            f"candidates="
+            f"{len(vector_candidates)}"
+        )
+
+        # ======================================
+        # 6. Hybrid Ranking
+        # ======================================
+
+        started_at = (
+            perf_counter()
+        )
+
+        if reranked_candidates:
+            final_references = (
+                self.hybrid_ranker.rank(
+                    candidates=(
+                        reranked_candidates
+                    ),
+                    top_k=(
+                        final_top_k
+                    ),
+                )
+            )
+        else:
+            final_references = []
+
+        performance[
+            "hybrid_ranking"
+        ] = (
+            perf_counter()
+            - started_at
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"hybrid_ranking="
+            f"{performance['hybrid_ranking'] * 1000:.0f}ms "
+            f"final_references="
+            f"{len(final_references)}"
+        )
+
+        # ======================================
+        # 7. Generator Context Pruning
+        # ======================================
+
+        generation_references = (
+            final_references[
+                :self.GENERATOR_REFERENCE_TOP_K
+            ]
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"generation_references="
+            f"{len(generation_references)}"
+            f"/{len(final_references)}"
+        )
+
+        return {
+            "search_plans": search_plans,
+            "retrieval_timings": retrieval_timings,
+            "collected_results": collected_results,
+            "vector_candidates": vector_candidates,
+            "reranked_candidates": reranked_candidates,
+            "final_references": final_references,
+            "generation_references": generation_references,
+            "performance": performance,
+        }
+
+    def write_and_validate(
+        self,
+        contract: dict[str, Any],
+        message: str,
+        issues: list[dict[str, Any]],
+        final_references: list[dict[str, Any]],
+        generation_references: list[dict[str, Any]],
+        on_event: ClauseEventCallback | None = None,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
+        """④ 생성 + ⑤ 검증. 근거 법령은 find_references() 결과를 받는다."""
+
+        performance: dict[str, float] = {}
+
+        # ======================================
+        # 7-1. References 이벤트 (생성 전에 근거 법령 먼저 알리기)
+        # ======================================
+        #
+        # 생성 모델이 글을 쓰기 전에 속으로 생각하는 시간(약 10초) 동안
+        # 화면에 "이 법령을 참고하고 있어요"를 먼저 보여줄 수 있게 한다.
+        # 이미 갖고 있는 값이라 추가 비용이 없다.
+
+        self._emit(
+            on_event,
+            "references",
+            {
+                "references": [
+                    self._to_public_reference(reference)
+                    for reference in generation_references
+                ],
+            },
+        )
+
+        # ======================================
+        # 8. Clause Generation
+        # ======================================
+        self._raise_if_stopped(should_stop)
+
+        self._emit(
+            on_event,
+            "progress",
+            {"step": "generation"},
+        )
+
+        started_at = (
+            perf_counter()
+        )
+
+        generated = (
+            self.generator.generate(
+                contract=contract,
+                message=message,
+                issues=issues,
+                references=(
+                    generation_references
+                ),
+                # 스트리밍 요청일 때만 조항 글자를 바로바로 넘긴다.
+                on_delta=(
+                    (
+                        lambda text: self._emit(
+                            on_event,
+                            "delta",
+                            {"text": text},
+                        )
+                    )
+                    if on_event is not None
+                    else None
+                ),
+                should_stop=should_stop,
+            )
+        )
+
+        performance[
+            "generation"
+        ] = (
+            perf_counter()
+            - started_at
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"generation="
+            f"{performance['generation'] * 1000:.0f}ms"
+        )
+
+        print(
+            "[DEBUG][ClauseAgent] "
+            f"generator_warnings="
+            f"{generated.get('warnings', [])}"
+        )
+
+        print(
+            "[DEBUG][ClauseAgent] "
+            f"unresolved_decisions="
+            f"{generated.get('unresolvedDecisions', [])}"
+        )
+
+        # ======================================
+        # 8-1. Draft 이벤트 (검증 전 조항 초안)
+        # ======================================
+
+        self._emit(
+            on_event,
+            "draft",
+            {
+                "title": generated.get("title"),
+                "summary": generated.get("summary"),
+                "suggestedClause": generated.get("suggestedClause"),
+                "warnings": generated.get("warnings") or [],
+                "unresolvedDecisions": (
+                    generated.get("unresolvedDecisions") or []
+                ),
+                "references": [
+                    self._to_public_reference(reference)
+                    for reference in final_references
+                ],
+            },
+        )
+        self._raise_if_stopped(should_stop)
+
+        self._emit(
+            on_event,
+            "progress",
+            {"step": "validation"},
+        )
+
+        # ======================================
+        # 9. Validation
+        # ======================================
+        #
+        # Validator에는 최종 5개 전체를 전달한다.
+        #
+        # 평소에는 deterministic validation으로
+        # 즉시 통과하지만,
+        # LLM Validator가 필요한 예외 상황에서는
+        # 더 넓은 근거를 확인할 수 있다.
+        # ======================================
+
+        started_at = (
+            perf_counter()
+        )
+
+        validation = (
+            self.validator.validate(
+                contract=contract,
+                message=message,
+                issues=issues,
+                generated=generated,
+                references=(
+                    final_references
+                ),
+                should_stop=should_stop,
+            )
+        )
+
+        performance[
+            "validation"
+        ] = (
+            perf_counter()
+            - started_at
+        )
+
+        validator_mode = str(
+            validation.get(
+                "validatorMode",
+                "UNKNOWN",
+            )
+        )
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"validation="
+            f"{performance['validation'] * 1000:.0f}ms "
+            f"mode={validator_mode}"
+        )
+
+        return {
+            "generated": generated,
+            "validation": validation,
+            "validator_mode": validator_mode,
+            "performance": performance,
         }
 
     @staticmethod
