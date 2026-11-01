@@ -107,6 +107,10 @@ class ContractClauseAgent:
         final_top_k: int | None = None,
         on_event: ClauseEventCallback | None = None,
         should_stop: Callable[[], bool] | None = None,
+        issues: list[dict[str, Any]] | None = None,
+        slots: list[dict[str, Any]] | None = None,
+        questions: list[dict[str, Any]] | None = None,
+        answers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """
         on_event를 넘기면 단계가 진행될 때마다 이벤트를 알려준다.
@@ -185,14 +189,23 @@ class ContractClauseAgent:
             f"{self.GENERATOR_REFERENCE_TOP_K}"
         )
 
-        analyzed = self.analyze_issues(
-            contract=contract,
-            message=message,
-            on_event=on_event,
-            should_stop=should_stop,
-        )
-        issues = analyzed["issues"]
-        performance.update(analyzed["performance"])
+        if issues is None:
+            analyzed = self.analyze_issues(
+                contract=contract,
+                message=message,
+                on_event=on_event,
+                should_stop=should_stop,
+            )
+            issues = analyzed["issues"]
+            performance.update(analyzed["performance"])
+        else:
+            # 대화형 특약: /understand에서 받은 쟁점을 그대로 쓴다. (① LLM을 다시 부르지 않는다)
+            performance["issue_analysis"] = 0.0
+
+            print(
+                "[PERF][ClauseAgent] "
+                "issue_analysis=skipped(issues_given)"
+            )
 
         # ======================================
         # 1-1. Scope Guard
@@ -238,6 +251,9 @@ class ContractClauseAgent:
             generation_references=generation_references,
             on_event=on_event,
             should_stop=should_stop,
+            slots=slots,
+            questions=questions,
+            answers=answers,
         )
         generated = written["generated"]
         validation = written["validation"]
@@ -1105,6 +1121,9 @@ class ContractClauseAgent:
         generation_references: list[dict[str, Any]],
         on_event: ClauseEventCallback | None = None,
         should_stop: Callable[[], bool] | None = None,
+        slots: list[dict[str, Any]] | None = None,
+        questions: list[dict[str, Any]] | None = None,
+        answers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """④ 생성 + ⑤ 검증. 근거 법령은 find_references() 결과를 받는다."""
 
@@ -1165,6 +1184,16 @@ class ContractClauseAgent:
                     else None
                 ),
                 should_stop=should_stop,
+
+                confirmed=(
+                    {
+                        "slots": slots,
+                        "questions": questions or [],
+                        "answers": answers or {},
+                    }
+                    if slots is not None
+                    else None
+                ),
             )
         )
 
@@ -1248,6 +1277,7 @@ class ContractClauseAgent:
                     final_references
                 ),
                 should_stop=should_stop,
+                slots=slots,
             )
         )
 

@@ -72,9 +72,11 @@ class FakeAgent:
         self.error = error
         self.delay = delay
         self.received = None
+        self.options = None
 
-    def suggest_clause(self, *, contract, message, on_event=None, should_stop=None):
+    def suggest_clause(self, *, contract, message, on_event=None, should_stop=None, **options):
         self.received = (contract, message)
+        self.options = options
         on_event = on_event or (lambda event, data: None)
         on_event("progress", {"step": "analysis"})
         if self.error:
@@ -249,6 +251,30 @@ def test_existing_endpoint_still_returns_json():
     assert response.status_code == 200
     assert response.json()["suggestedClause"] == DRAFT
 
+def test_write_stream_endpoint_passes_confirmed_values():
+    from sai_rag.api import main
+
+    agent = FakeAgent(final_clause=FINAL)
+    main.app.state.clause_agent = agent
+    client = TestClient(main.app)
+
+    response = client.post(
+        "/rag/contracts/clause-chat/write/stream",
+        json={
+            "contract": CONTRACT,
+            "message": "중도상환 수수료 없이",
+            "issues": [{"type": "EARLY_REPAYMENT", "reason": "중도상환", "searchTerms": ["중도상환"]}],
+            "slots": [],
+            "questions": [],
+            "answers": {},
+        },
+    )
+
+    assert response.status_code == 200
+    events, _ = parse_sse([response.text])
+    assert events[-1][0] == "final"
+    assert agent.options["issues"][0]["type"] == "EARLY_REPAYMENT"
+
 
 # ---------------------------------------------------------------
 # API 경로 회귀 테스트: 백엔드(RagApiClient)가 부르는 경로가
@@ -271,6 +297,8 @@ def test_backend_routes_exist():
         "/rag/contracts/clause-suggestions",
         "/rag/contracts/clause-suggestions/stream",
         "/rag/contracts/clause-chat/understand",
+        "/rag/contracts/clause-chat/route",
+        "/rag/contracts/clause-chat/write/stream",
     } <= set(_post_paths())
 
 

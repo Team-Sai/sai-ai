@@ -218,7 +218,7 @@ def _ieyo(word: str) -> str:
     return "이에요" if _final_consonant(word) else "예요"
 
 
-def _ro(word: str) -> str:
+def ro_particle(word: str) -> str:
     # 받침이 없거나 ㄹ 받침(8번)이면 "로", 그 밖의 받침이면 "으로"
     return "로" if _final_consonant(word) in (None, 0, 8) else "으로"
 
@@ -249,7 +249,7 @@ def build_from_question(slot: dict[str, Any], contract: dict[str, Any]) -> dict[
         "id": f"confirm_from_{field}",
         "text": (
             f"지금 계약 {label}은 {current}{_ieyo(current)}. "
-            f"{current}에서 {value}{_ro(value)} 바꾸는 게 맞을까요?"
+            f"{current}에서 {value}{ro_particle(value)} 바꾸는 게 맞을까요?"
         ),
         "options": ["맞아요", "아니요"],
     }

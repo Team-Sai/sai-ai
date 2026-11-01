@@ -17,11 +17,17 @@ from sai_rag.agent.clause_generator import (
     ClauseGenerator,
 )
 
+from sai_rag.agent.chat_router import (
+    route_reply,
+)
+
 from sai_rag.agent.contract_clause_agent import (
     ContractClauseAgent,
 )
 
 from sai_rag.api.schemas import (
+    ClauseChatRouteRequest,
+    ClauseChatWriteRequest,
     ContractClauseSuggestionRequest,
     ContractReviewRequest,
 )
@@ -366,6 +372,51 @@ def understand_contract_clause(
 
 
 @app.post(
+    "/rag/contracts/clause-chat/route"
+)
+def route_contract_clause_reply(
+    body: ClauseChatRouteRequest,
+):
+    """
+    대화형 특약: 사용자 답장을 규칙으로 분류한다. (LLM 0번)
+
+    확정 / 거절 / 값 바꾸기 / 질문 답 / 모름 / 애매 중 하나와
+    고친 값 칸·답 목록을 돌려준다. 애매하면 아무것도 바꾸지 않는다.
+    """
+
+    try:
+        result = route_reply(
+            message=body.message,
+            contract=to_agent_contract(
+                body.contract.model_dump()
+            ),
+            slots=body.slots,
+            questions=body.questions,
+            answers=body.answers,
+        )
+
+    except (KeyError, TypeError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "대화 상태 형식이 "
+                "올바르지 않습니다."
+            ),
+        ) from exc
+
+    print(
+        "[CHAT] "
+        f"kind={result['kind']} "
+        f"route={'UNDECIDED' if result['kind'] == 'AMBIGUOUS' else 'RULE'} "
+        f"message_chars={len(body.message.strip())} "
+        f"pending={len(result['pendingQuestions'])}"
+    )
+
+    return result
+
+
+
+@app.post(
     "/rag/contracts/clause-suggestions/stream"
 )
 def suggest_contract_clause_stream(
@@ -400,3 +451,47 @@ def suggest_contract_clause_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+@app.post(
+    "/rag/contracts/clause-chat/write/stream"
+)
+def write_contract_clause_stream(
+    request: Request,
+    body: ClauseChatWriteRequest,
+):
+    """
+    대화형 특약 2턴: 확정한 조건으로 특약을 쓴다. (SSE)
+
+    /understand에서 받은 쟁점을 그대로 써서 ① 쟁점 분석을 다시 하지 않고,
+    ② 검색 → ③ 순위 → ④ 생성 → ⑤ 검증을 한다.
+    이벤트는 /clause-suggestions/stream과 같다. (progress는 retrieval부터)
+    """
+
+    clause_agent = (
+        request.app.state
+        .clause_agent
+    )
+
+    contract = to_agent_contract(
+        body.contract.model_dump()
+    )
+
+    return StreamingResponse(
+        stream_clause_events(
+            clause_agent=clause_agent,
+            contract=contract,
+            message=body.message,
+            agent_options={
+                "issues": body.issues,
+                "slots": body.slots,
+                "questions": body.questions,
+                "answers": body.answers,
+            },
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+

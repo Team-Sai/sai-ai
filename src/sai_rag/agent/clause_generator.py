@@ -16,6 +16,10 @@ from sai_rag.agent.intent_value_normalizer import (
     today_kst,
 )
 
+from sai_rag.agent.chat_router import (
+    UNKNOWN_ANSWER,
+)
+
 from sai_rag.agent.openai_options import (
     openai_call_options,
 )
@@ -223,6 +227,7 @@ class ClauseGenerator:
         references: list[dict[str, Any]],
         on_delta: Callable[[str], None] | None = None,
         should_stop: Callable[[], bool] | None = None,
+        confirmed: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         on_delta를 넘기면 모델 응답을 스트리밍으로 받아
@@ -282,6 +287,11 @@ class ClauseGenerator:
                 ),
                 decision_candidates=(
                     decision_candidates
+                ),
+                confirmed_text=(
+                    self._format_confirmed(
+                        confirmed
+                    )
                 ),
             )
         )
@@ -535,6 +545,7 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
             dict[str, str]
         ],
         decision_candidates: list[str],
+        confirmed_text: str = "",
     ) -> str:
         contract_json = (
             json.dumps(
@@ -582,11 +593,20 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
 
         today = today_kst().isoformat()
 
+        confirmed_section = (
+            "\n사용자가 확정한 조건 (반드시 그대로 반영한다):\n"
+            f"{confirmed_text}\n"
+            if confirmed_text
+            else ""
+        )
+
         return f"""
 오늘 날짜(한국 시간): {today}
 
 사용자 요청:
 {message}
+
+{confirmed_section}
 
 계약정보:
 {contract_json}
@@ -601,13 +621,60 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
 {references_json}
 
 작성 순서:
-1. 사용자 요청에 이미 정해진 조건인지 확인한다.
+1. 사용자 요청과 사용자가 확정한 조건에 이미 정해진 조건인지 확인한다.
 2. 계약정보에 이미 정해진 조건인지 확인한다.
 3. 조항 이행에 꼭 필요한데 미정이면 [입력 필요: ...]로 남긴다.
 4. 불필요한 조건은 추가하지 않는다.
 
 위 정보만 사용해 조항을 작성한다.
 """.strip()
+
+    @staticmethod
+    def _format_confirmed(
+        confirmed: dict[str, Any] | None,
+    ) -> str:
+        """
+        대화형 특약에서 사용자가 확정한 조건을 생성 프롬프트용 글로 만든다.
+        확정한 것이 없으면 빈 글자.
+        """
+
+        if not confirmed:
+            return ""
+
+        lines: list[str] = []
+
+        for slot in confirmed.get("slots") or []:
+            if not slot.get("confirmed"):
+                continue
+
+            line = f"- {slot['name']}: {slot['value']}"
+
+            if slot.get("condition"):
+                line += f" (조건: {slot['condition']})"
+
+            if slot.get("from"):
+                line += f" (원래 값: {slot['from']})"
+
+            lines.append(line)
+
+        answers = confirmed.get("answers") or {}
+
+        for question in confirmed.get("questions") or []:
+            answer = answers.get(question.get("id"))
+
+            if answer is None:
+                continue
+
+            if answer == UNKNOWN_ANSWER:
+                lines.append(
+                    f"- {question['text']} → 아직 정하지 않음. "
+                    "조항에 [입력 필요: …] 칸으로 남긴다."
+                )
+            else:
+                lines.append(f"- {question['text']} → {answer}")
+
+        return "\n".join(lines)
+
 
     # ==========================================
     # Compact Input
