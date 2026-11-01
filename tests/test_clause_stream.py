@@ -270,6 +270,7 @@ def test_backend_routes_exist():
         "/rag/contracts/review",
         "/rag/contracts/clause-suggestions",
         "/rag/contracts/clause-suggestions/stream",
+        "/rag/contracts/clause-chat/understand",
     } <= set(_post_paths())
 
 

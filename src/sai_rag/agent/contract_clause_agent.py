@@ -682,12 +682,11 @@ class ContractClauseAgent:
             perf_counter()
         )
 
-        issues = (
-            self.issue_analyzer.analyze(
-                contract=contract,
-                message=message,
-            )
+        detailed = self.issue_analyzer.analyze_detailed(
+            contract=contract,
+            message=message,
         )
+        issues = detailed["issues"]
 
         performance[
             "issue_analysis"
@@ -704,9 +703,61 @@ class ContractClauseAgent:
 
         return {
             "issues": issues,
-            "performance": performance
+            "understanding": detailed["understanding"],
+            "questions": detailed["questions"],
+            "performance": performance,
         }
 
+    def understand(
+        self,
+        contract: dict[str, Any],
+        message: str,
+    ) -> dict[str, Any]:
+        """
+        대화형 특약 1턴(이해 확인).
+
+        ① 쟁점 분석만 하고, 이해한 내용과 정해야 할 것을 돌려준다.
+        검색·생성·검증은 하지 않는다.
+        issues(searchTerms 포함)는 확정 후 작성 단계에서
+        ①을 다시 하지 않도록 그대로 돌려준다.
+        """
+
+        print(
+            "[PERF][ClauseAgent] "
+            "understand started "
+            f"message_chars={len(message.strip())}"
+        )
+
+        analyzed = self.analyze_issues(
+            contract=contract,
+            message=message,
+        )
+
+        performance = {
+            "issueAnalysisMs": round(
+                analyzed["performance"]["issue_analysis"] * 1000,
+                2,
+            ),
+        }
+
+        if not analyzed["issues"]:
+            return {
+                "inScope": False,
+                "issues": [],
+                "understanding": None,
+                "questions": [],
+                "guide": self.OUT_OF_SCOPE_GUIDE,
+                "debug": {"performance": performance},
+            }
+
+        return {
+            "inScope": True,
+            "issues": analyzed["issues"],
+            "understanding": analyzed["understanding"],
+            "questions": analyzed["questions"],
+            "guide": None,
+            "debug": {"performance": performance},
+        }
     def find_references(
         self,
         contract: dict[str, Any],
