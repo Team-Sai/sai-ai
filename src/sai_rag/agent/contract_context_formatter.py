@@ -25,7 +25,7 @@ class ContractContextFormatter:
         "EQUAL_PRINCIPAL": (
             "원금균등상환"
         ),
-        "BULLET": (
+        "BULLET_REPAYMENT": (
             "만기일시상환"
         ),
         "LUMP_SUM": (

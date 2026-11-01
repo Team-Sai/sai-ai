@@ -49,6 +49,17 @@ class ClauseIssueAnalyzer:
         "OTHER",
     }
 
+    ALLOWED_SLOT_FIELDS = {
+        "principalAmount",
+        "interestRate",
+        "lateInterestRate",
+        "startDate",
+        "maturityDate",
+        "repaymentDay",
+        "repaymentType",
+    }
+
+
     MAX_QUESTIONS = 3
 
     def __init__(self):
@@ -162,6 +173,13 @@ OTHER
    "understanding.slots"에 넣으세요. 요청에 없는 값을 지어내지 마세요.
    kind는 MONTHS, DAYS, COUNT, PERCENT, AMOUNT, DATE, CHOICE 중 하나입니다.
    value에는 사용자가 쓴 단위까지 함께 쓰세요(예: 3개월, 7%, 50만원).
+   계약 정보의 값을 바꾸려는 요청이면 slot에 아래 칸도 함께 쓰세요.
+   - "value": 바꿀 값
+   - "from": 사용자가 말한 원래 값. 말하지 않았으면 쓰지 마세요.
+   - "field": 바꾸려는 계약 항목. principalAmount, interestRate, lateInterestRate,
+     startDate, maturityDate, repaymentDay, repaymentType 중 하나만 쓰세요.
+   - "condition": 값이 바뀌는 조건(예: "2개월 연속 연체 시"). 조건이 없으면 쓰지 마세요.
+   계약 항목을 바꾸지 않는 값(연체 개월 수, 보증 한도 등)에는 "field"를 쓰지 마세요.
 
 12. 특약을 쓰기 전에 사용자가 정해야 할 것이 있으면 "questions"에 최대 3개까지 넣으세요.
    - "현재 계약 정보"에 이미 있는 값(원금, 이자율, 시작일, 만기일, 상환일, 상환방식)은 묻지 마세요.
@@ -369,15 +387,15 @@ OTHER
         if not isinstance(raw_slots, list):
             raw_slots = []
 
-        slots: list[dict[str, str]] = []
+        slots: list[dict[str, Any]] = []
 
         for raw_slot in raw_slots:
             if not isinstance(raw_slot, dict):
                 continue
 
-            name = str(raw_slot.get("name", "")).strip()
-            value = str(raw_slot.get("value", "")).strip()
-            kind = str(raw_slot.get("kind", "")).strip().upper()
+            name = str(raw_slot.get("name") or "").strip()
+            value = str(raw_slot.get("value") or "").strip()
+            kind = str(raw_slot.get("kind") or "").strip().upper()
 
             if not name or not value:
                 continue
@@ -385,16 +403,30 @@ OTHER
             if kind not in cls.ALLOWED_SLOT_KINDS:
                 kind = "OTHER"
 
+            from_value = str(raw_slot.get("from") or "").strip()
+            field = str(raw_slot.get("field") or "").strip()
+            condition = str(raw_slot.get("condition") or "").strip()
+
+            if field not in cls.ALLOWED_SLOT_FIELDS:
+                field = ""
+
             slots.append(
                 {
                     "name": name,
                     "kind": kind,
                     "value": value,
+                    "from": from_value or None,
+                    "field": field or None,
+                    "condition": condition or None,
+                    # 아래 두 칸은 LLM이 보내도 믿지 않는다.
+                    # inMessage는 규칙(slot_rules)이, confirmed는 사용자 답(분류기)이 정한다.
+                    "inMessage": False,
+                    "confirmed": False,
                 }
             )
 
         return {
-            "summary": str(raw.get("summary", "")).strip(),
+            "summary": str(raw.get("summary") or "").strip(),
             "slots": slots,
         }
 

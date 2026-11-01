@@ -17,6 +17,9 @@ from sai_rag.agent.clause_validator import (
 from sai_rag.agent.issue_analyzer import (
     ClauseIssueAnalyzer,
 )
+from sai_rag.agent.slot_rules import (
+    apply_slot_rules,
+)
 from sai_rag.reranking.base import (
     RerankerProvider,
 )
@@ -746,16 +749,26 @@ class ContractClauseAgent:
                 "issues": [],
                 "understanding": None,
                 "questions": [],
+                "fieldEdits": [],
                 "guide": self.OUT_OF_SCOPE_GUIDE,
                 "debug": {"performance": performance},
             }
 
+        checked = apply_slot_rules(
+            contract=contract,
+            message=message,
+            understanding=analyzed["understanding"],
+            questions=analyzed["questions"],
+            max_questions=self.issue_analyzer.MAX_QUESTIONS,
+        )
+
         return {
             "inScope": True,
             "issues": analyzed["issues"],
-            "understanding": analyzed["understanding"],
-            "questions": analyzed["questions"],
-            "guide": None,
+            "understanding": checked["understanding"],
+            "questions": checked["questions"],
+            "fieldEdits": checked["fieldEdits"],
+            "guide": checked["guide"],
             "debug": {"performance": performance},
         }
     def find_references(

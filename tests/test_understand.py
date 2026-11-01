@@ -84,7 +84,18 @@ def test_detailed_returns_understanding_and_questions():
     result = analyzer.analyze_detailed(CONTRACT, "3개월 연속 연체하면 남은 원금을 전부 갚게 해 주세요")
 
     assert [issue["type"] for issue in result["issues"]] == ["ACCELERATION"]
-    assert result["understanding"]["slots"] == [{"name": "연체 개월 수", "kind": "MONTHS", "value": "3개월"}]
+    assert result["understanding"]["slots"] == [
+        {
+            "name": "연체 개월 수",
+            "kind": "MONTHS",
+            "value": "3개월",
+            "from": None,
+            "field": None,
+            "condition": None,
+            "inMessage": False,
+            "confirmed": False,
+        }
+    ]
     assert result["questions"][0]["options"] == ["예", "아니요"]
 
 
@@ -106,8 +117,9 @@ def test_unknown_slot_kind_becomes_other_and_bad_slots_are_dropped():
 
     slots = analyzer.analyze_detailed(CONTRACT, "요청")["understanding"]["slots"]
 
-    assert slots == [{"name": "연체 기간", "kind": "OTHER", "value": "3주"}]
-
+    assert [(slot["name"], slot["kind"], slot["value"]) for slot in slots] == [
+        ("연체 기간", "OTHER", "3주"),
+    ]
 
 def test_questions_are_capped_and_deduplicated():
     raw_questions = [{"id": f"q{i}", "text": f"질문 {i}", "options": ["예"]} for i in range(5)]
@@ -155,6 +167,75 @@ def test_analyze_still_returns_only_issues():
 
     assert analyzer.analyze(CONTRACT, "요청") == [ISSUE]
 
+def test_slot_keeps_from_field_condition_and_drops_unknown_field():
+    analyzer = make_analyzer(
+        {
+            "inScope": True,
+            "issues": [ISSUE],
+            "understanding": {
+                "summary": "요약",
+                "slots": [
+                    {
+                        "name": "연체 시 이자율",
+                        "kind": "PERCENT",
+                        "value": "7%",
+                        "from": "5%",
+                        "field": "interestRate",
+                        "condition": "2개월 연속 연체 시",
+                    },
+                    {"name": "보증 한도", "kind": "PERCENT", "value": "50%", "field": "guaranteeLimit"},
+                ],
+            },
+        }
+    )
+
+    slots = analyzer.analyze_detailed(CONTRACT, "요청")["understanding"]["slots"]
+
+    assert slots[0]["from"] == "5%"
+    assert slots[0]["field"] == "interestRate"
+    assert slots[0]["condition"] == "2개월 연속 연체 시"
+    assert slots[1]["field"] is None
+
+
+def test_llm_cannot_mark_slot_as_confirmed():
+    analyzer = make_analyzer(
+        {
+            "inScope": True,
+            "issues": [ISSUE],
+            "understanding": {
+                "summary": "요약",
+                "slots": [
+                    {"name": "이자율", "kind": "PERCENT", "value": "7%", "inMessage": True, "confirmed": True},
+                ],
+            },
+        }
+    )
+
+    slot = analyzer.analyze_detailed(CONTRACT, "요청")["understanding"]["slots"][0]
+
+    assert slot["inMessage"] is False
+    assert slot["confirmed"] is False
+
+
+def test_null_slot_values_are_dropped():
+    analyzer = make_analyzer(
+        {
+            "inScope": True,
+            "issues": [ISSUE],
+            "understanding": {
+                "summary": None,
+                "slots": [
+                    {"name": None, "kind": "PERCENT", "value": "7%"},
+                    {"name": "이자율", "kind": None, "value": None},
+                ],
+            },
+        }
+    )
+
+    understanding = analyzer.analyze_detailed(CONTRACT, "요청")["understanding"]
+
+    assert understanding["slots"] == []
+    assert understanding["summary"] == ""
 
 # ---------------------------------------------------------------
 # 2. ContractClauseAgent.understand: 검색·생성 없이 이해 확인만
@@ -186,3 +267,24 @@ def test_understand_out_of_scope_returns_guide():
     assert result["inScope"] is False
     assert result["understanding"] is None
     assert "금전소비대차" in result["guide"]
+
+def test_understand_guides_to_contract_field_for_unconditioned_change():
+    agent = make_agent(
+        {
+            "inScope": True,
+            "issues": [{"type": "INTEREST", "reason": "이율 변경", "searchTerms": ["약정이자율"]}],
+            "understanding": {
+                "summary": "이자율을 7%로 바꾸려는 걸로 이해했어요.",
+                "slots": [{"name": "이자율", "kind": "PERCENT", "value": "7%", "field": "interestRate"}],
+            },
+            "questions": [{"id": "x", "text": "x", "options": []}],
+        }
+    )
+
+    result = agent.understand(contract=CONTRACT, message="이자율을 7%로 바꿔 주세요")
+
+    assert result["fieldEdits"][0]["field"] == "interestRate"
+    assert "이자율 칸을 바꾸면" in result["guide"]
+    assert result["questions"] == []
+    assert result["understanding"]["slots"][0]["inMessage"] is True
+
