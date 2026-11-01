@@ -324,3 +324,75 @@ def apply_slot_rules(
         "fieldEdits": [],
         "guide": None,
     }
+
+# ======================================
+# 작성 후 검증 (ClauseValidator가 사용)
+# ======================================
+
+NUMERIC_KINDS = ("MONTHS", "DAYS", "COUNT", "PERCENT", "AMOUNT", "DATE")
+
+
+def tagged_values(text: str) -> set[tuple[str, Any]]:
+    """
+    글 안의 숫자 값을 종류를 붙여서 모두 꺼낸다.
+    예: "2개월 연속, 연 7%" → {("PERIOD", (2, "개월")), ("PERCENT", 7.0)}
+    """
+
+    return (
+        {("PERCENT", value) for value in find_percents(text)}
+        | {("AMOUNT", value) for value in find_amounts(text)}
+        | {("DATE", value) for value in find_dates(text)}
+        | {("PERIOD", value) for value in _parse_periods(text)}
+    )
+
+
+def usable_slots(slots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """규칙 검증에 쓸 수 있는 값 칸: 사용자가 확정했거나, 원문에 있는 값."""
+
+    return [slot for slot in slots if slot.get("confirmed") or slot.get("inMessage")]
+
+
+def check_slots_against_clause(
+    *,
+    slots: list[dict[str, Any]],
+    message: str,
+    clause: str,
+) -> dict[str, Any]:
+    usable = usable_slots(slots)
+    clause_values = tagged_values(clause)
+
+    not_reflected: list[str] = []
+    explained: set[tuple[str, Any]] = set()
+    old_values: set[tuple[str, Any]] = set()
+    skip_fields: set[str] = set()
+
+    for slot in usable:
+        value_values = tagged_values(slot["value"])
+        condition_values = tagged_values(slot.get("condition") or "")
+
+        if slot["kind"] in NUMERIC_KINDS and (
+            not value_values or not value_values <= clause_values
+        ):
+            not_reflected.append(slot["name"])
+
+        if not condition_values <= clause_values:
+            not_reflected.append(f"{slot['name']}(조건)")
+
+        explained |= value_values | condition_values
+
+        if slot.get("from"):
+            from_values = tagged_values(slot["from"])
+            old_values |= from_values
+            explained |= from_values
+
+        if slot.get("field") and slot.get("condition"):
+            skip_fields.add(slot["field"])
+
+    return {
+        "usableCount": len(usable),
+        "notReflected": not_reflected,
+        "oldValues": old_values,
+        "skipFields": skip_fields,
+        "explainsMessage": bool(usable) and tagged_values(message) <= explained,
+    }
+

@@ -5,8 +5,7 @@
 확실한 경우에만 동작하고, 모르면 아무것도 하지 않는지 확인한다.
 """
 
-from sai_rag.agent.slot_rules import apply_slot_rules
-
+from sai_rag.agent.slot_rules import apply_slot_rules, check_slots_against_clause
 
 CONTRACT = {
     "principal": 1_000_000,
@@ -155,3 +154,53 @@ def test_late_interest_rate_is_always_a_special_clause():
 
     assert result["fieldEdits"] == []
     assert result["guide"] is None
+
+# ---------------------------------------------------------------
+# 4. 작성 후 검증용 비교
+# ---------------------------------------------------------------
+
+RATE_MESSAGE = "2개월 연속 연체하면 이자율을 연 5%에서 연 7%로 올려 주세요"
+RATE_CLAUSE = "채무자가 2개월 연속하여 연체한 경우 그 다음 달부터 약정 이자율은 연 7%로 한다."
+
+
+def rate_slot(**overrides):
+    slot = make_slot(value="연 7%", field="interestRate", condition="2개월 연속 연체 시", confirmed=True)
+    slot["from"] = "연 5%"
+    slot.update(overrides)
+    return slot
+
+
+def test_reflected_conditioned_change_explains_message():
+    result = check_slots_against_clause(slots=[rate_slot()], message=RATE_MESSAGE, clause=RATE_CLAUSE)
+
+    assert result["notReflected"] == []
+    assert result["skipFields"] == {"interestRate"}
+    assert ("PERCENT", 5.0) in result["oldValues"]
+    assert result["explainsMessage"] is True
+
+
+def test_missing_value_or_condition_is_reported():
+    clause = "채무자가 3개월 연속하여 연체한 경우 약정 이자율은 연 6%로 한다."
+
+    result = check_slots_against_clause(slots=[rate_slot()], message=RATE_MESSAGE, clause=clause)
+
+    assert result["notReflected"] == ["값", "값(조건)"]
+
+
+def test_unconfirmed_slot_not_in_message_is_not_used():
+    slot = rate_slot(confirmed=False, inMessage=False)
+
+    result = check_slots_against_clause(slots=[slot], message=RATE_MESSAGE, clause=RATE_CLAUSE)
+
+    assert result["usableCount"] == 0
+    assert result["skipFields"] == set()
+    assert result["explainsMessage"] is False
+
+
+def test_unexplained_number_in_message_blocks_rule_path():
+    message = RATE_MESSAGE + " 그리고 위약금은 10만원으로 해 주세요"
+
+    result = check_slots_against_clause(slots=[rate_slot()], message=message, clause=RATE_CLAUSE)
+
+    assert result["explainsMessage"] is False
+
