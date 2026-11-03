@@ -171,7 +171,7 @@ OTHER
 
 11. 사용자 요청에 나온 구체적인 값(기간, 횟수, 금액, 비율, 날짜, 선택)을
    "understanding.slots"에 넣으세요. 요청에 없는 값을 지어내지 마세요.
-   kind는 MONTHS, DAYS, COUNT, PERCENT, AMOUNT, DATE, CHOICE 중 하나입니다.
+   kind는 MONTHS, DAYS, COUNT, PERCENT, AMOUNT, DATE, CHOICE, OTHER 중 하나입니다. 어느 것에도 맞지 않으면 OTHER를 쓰세요.
    value에는 사용자가 쓴 단위까지 함께 쓰세요(예: 3개월, 7%, 50만원).
    계약 정보의 값을 바꾸려는 요청이면 slot에 아래 칸도 함께 쓰세요.
    - "value": 바꿀 값
