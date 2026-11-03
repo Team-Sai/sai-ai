@@ -39,3 +39,15 @@ def test_confirmed_slots_and_answers_become_prompt_lines():
 def test_no_confirmed_values_means_empty_text():
     assert ClauseGenerator._format_confirmed(None) == ""
     assert ClauseGenerator._format_confirmed({"slots": [], "questions": [], "answers": {}}) == ""
+
+def test_items_that_are_not_dicts_are_skipped():
+    text = ClauseGenerator._format_confirmed(
+        {
+            "slots": [None, "값", {"name": "이자율", "value": "7%", "confirmed": True}],
+            "questions": [None, {"id": "scope", "text": "어디에 적용할까요?"}],
+            "answers": {"scope": "남은 원금"},
+        }
+    )
+
+    assert text == "- 이자율: 7%\n- 어디에 적용할까요? → 남은 원금"
+

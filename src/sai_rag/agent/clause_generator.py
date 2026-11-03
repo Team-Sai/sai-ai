@@ -644,6 +644,10 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
         lines: list[str] = []
 
         for slot in confirmed.get("slots") or []:
+            if not isinstance(slot, dict):
+                continue
+
+
             if not slot.get("confirmed"):
                 continue
 
@@ -660,6 +664,9 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
         answers = confirmed.get("answers") or {}
 
         for question in confirmed.get("questions") or []:
+            if not isinstance(question, dict):
+                continue
+
             answer = answers.get(question.get("id"))
 
             if answer is None:
