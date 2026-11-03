@@ -318,6 +318,54 @@ def suggest_contract_clause(
 
 
 @app.post(
+    "/rag/contracts/clause-chat/understand"
+)
+def understand_contract_clause(
+    request: Request,
+    body: ContractClauseSuggestionRequest,
+):
+    """
+    대화형 특약 1턴: 쓰기 전에 이해한 내용과 정해야 할 것을 돌려준다.
+    쟁점 분석(LLM 1번)만 하고 검색·생성은 하지 않는다.
+    """
+
+    try:
+        clause_agent = (
+            request.app.state
+            .clause_agent
+        )
+
+        contract = to_agent_contract(
+            body.contract.model_dump()
+        )
+
+        return clause_agent.understand(
+            contract=contract,
+            message=body.message,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    except Exception as exc:
+        print(
+            "[Clause Understand Error]",
+            repr(exc),
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "요청 내용을 확인하는 중 "
+                "오류가 발생했습니다."
+            ),
+        ) from exc
+
+
+@app.post(
     "/rag/contracts/clause-suggestions/stream"
 )
 def suggest_contract_clause_stream(
@@ -352,78 +400,3 @@ def suggest_contract_clause_stream(
             "X-Accel-Buffering": "no",
         },
     )
-
-    try:
-        clause_agent = (
-            request.app.state
-            .clause_agent
-        )
-
-        contract = (
-            body.contract.model_dump()
-        )
-
-        # API 요청 모델은 기존 호환성을 위해
-        # principal / repaymentDate를 유지한다.
-        #
-        # Agent/Generator에서는 의미가 더 명확한
-        # principalAmount / maturityDate도 함께 사용하도록
-        # canonical alias를 추가한다.
-        #
-        # 기존 ContractDomainValidator는 principal /
-        # repaymentDate를 계속 읽기 때문에 원래 key도 보존한다.
-        if (
-            contract.get(
-                "principalAmount"
-            )
-            is None
-        ):
-            contract[
-                "principalAmount"
-            ] = contract.get(
-                "principal"
-            )
-
-        if (
-            contract.get(
-                "maturityDate"
-            )
-            is None
-        ):
-            contract[
-                "maturityDate"
-            ] = contract.get(
-                "repaymentDate"
-            )
-
-        # 후보 수 / 최종 근거 수는
-        # ContractClauseAgent 내부 정책을 사용한다.
-
-        return (
-            clause_agent.suggest_clause(
-                contract=contract,
-                message=(
-                    body.message
-                ),
-            )
-        )
-
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=str(exc),
-        ) from exc
-
-    except Exception as exc:
-        print(
-            "[Clause Agent Error]",
-            repr(exc),
-        )
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "AI 특약 생성 중 "
-                "오류가 발생했습니다."
-            ),
-        ) from exc
