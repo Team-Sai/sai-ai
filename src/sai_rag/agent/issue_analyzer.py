@@ -160,7 +160,7 @@ OTHER
 
 11. 사용자 요청에 나온 구체적인 값(기간, 횟수, 금액, 비율, 날짜, 선택)을
    "understanding.slots"에 넣으세요. 요청에 없는 값을 지어내지 마세요.
-   kind는 MONTHS, DAYS, COUNT, PERCENT, AMOUNT, DATE, CHOICE 중 하나입니다.
+   kind는 MONTHS, DAYS, COUNT, PERCENT, AMOUNT, DATE, CHOICE, OTHER 중 하나입니다. 어느 것에도 맞지 않으면 OTHER를 쓰세요.
    value에는 사용자가 쓴 단위까지 함께 쓰세요(예: 3개월, 7%, 50만원).
 
 12. 특약을 쓰기 전에 사용자가 정해야 할 것이 있으면 "questions"에 최대 3개까지 넣으세요.
