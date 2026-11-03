@@ -75,7 +75,8 @@ class FakeHybridRanker:
 
 
 class FakeGenerator:
-    def generate(self, contract, message, issues, references, on_delta=None, should_stop=None):
+    def generate(self, contract, message, issues, references, on_delta=None, should_stop=None, **kwargs):
+        self.last_kwargs = kwargs
         if on_delta is not None:
             on_delta("제1조 ")
         return {
@@ -88,7 +89,8 @@ class FakeGenerator:
 
 
 class FakeValidator:
-    def validate(self, contract, message, issues, generated, references, should_stop=None):
+    def validate(self, contract, message, issues, generated, references, should_stop=None, **kwargs):
+        self.last_kwargs = kwargs
         return {"status": "PASS", "isSafeToSuggest": True, "checks": [], "validatorMode": "DETERMINISTIC"}
 
 
@@ -139,3 +141,42 @@ def test_full_pipeline_response_shape():
     assert result["debug"]["validatorMode"] == "DETERMINISTIC"
     assert result["references"][0]["lawName"] == "민법"
     assert retriever.calls == len(result["debug"]["searchPlans"])
+
+WRITE_SLOT = {
+    "name": "연속 연체 기간",
+    "kind": "MONTHS",
+    "value": "3개월",
+    "from": None,
+    "field": None,
+    "condition": None,
+    "inMessage": True,
+    "confirmed": True,
+}
+
+
+class ExplodingAnalyzerResponses:
+    def create(self, **kwargs):
+        raise AssertionError("작성 단계에서 쟁점 분석(LLM)을 다시 불렀습니다.")
+
+
+def test_write_with_given_issues_skips_analysis_and_passes_confirmed_values():
+    agent, _ = make_agent()
+    agent.issue_analyzer.client = types.SimpleNamespace(responses=ExplodingAnalyzerResponses())
+    events = []
+
+    result = agent.suggest_clause(
+        contract=CONTRACT,
+        message="중도상환 수수료 없이 해 주세요",
+        on_event=lambda event, data: events.append((event, data)),
+        issues=ANALYZER_OUTPUT["issues"],
+        slots=[WRITE_SLOT],
+        questions=[],
+        answers={},
+    )
+
+    steps = [data["step"] for event, data in events if event == "progress"]
+
+    assert steps == ["retrieval", "generation", "validation"]
+    assert agent.generator.last_kwargs["confirmed"]["slots"] == [WRITE_SLOT]
+    assert agent.validator.last_kwargs["slots"] == [WRITE_SLOT]
+    assert result["debug"]["performance"]["issueAnalysisMs"] == 0.0

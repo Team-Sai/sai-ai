@@ -62,6 +62,7 @@ def stream_clause_events(
     clause_agent: Any,
     contract: dict[str, Any],
     message: str,
+    agent_options: dict[str, Any] | None = None,
     heartbeat_seconds: float = 15.0,
 ) -> Iterator[str]:
     """
@@ -81,6 +82,7 @@ def stream_clause_events(
                 message=message,
                 on_event=on_event,
                 should_stop=cancelled.is_set,
+                **(agent_options or {}),
             )
             events.put(("final", result))
         except ClauseGenerationCancelled:
