@@ -67,3 +67,48 @@ def test_unverified_legal_refs_are_reported():
 
     assert any("연체이자 적용 여부 확인 필요" in ref for ref in refs)
     assert all("민법 제398조" not in ref for ref in refs)
+
+
+def guide(issue_types, message="", questions=(), answers=None):
+    from sai_rag.agent.decision_rules import writing_guide
+
+    return writing_guide(
+        issue_types=issue_types,
+        message=message,
+        questions=list(questions),
+        answers=answers or {},
+        unknown_answer="UNKNOWN",
+    )
+
+
+def test_unasked_question_with_default_becomes_default_text():
+    result = guide(["DEFAULT"])
+
+    assert "그 회차 상환금을 전혀 지급하지 않은 경우에만 연체로 본다" in result["defaults"]
+    assert result["open"] == []
+
+
+def test_answered_or_unknown_question_is_handled():
+    answered = guide(["DEFAULT"], answers={"partial_payment": "일부만 내도 연체로 봐요"})
+    unknown = guide(["DEFAULT"], answers={"partial_payment": "UNKNOWN"})
+
+    assert all("전혀 지급하지" not in text for text in answered["defaults"])
+    assert unknown["open"] == ["일부 지급 시 연체 처리 기준"]
+
+
+def test_answer_to_similar_llm_question_is_used():
+    questions = [{"id": "llm_partial", "text": "일부만 낸 달도 연체로 볼까요?"}]
+
+    result = guide(["DEFAULT"], questions=questions, answers={"llm_partial": "예"})
+
+    assert all("전혀 지급하지" not in text for text in result["defaults"])
+    assert "일부 지급 시 연체 처리 기준" not in result["open"]
+
+
+def test_rejected_defaults_become_open_and_contract_values_are_listed():
+    result = guide(["LATE_INTEREST"], answers={"confirm_defaults": "바꿀래요"})
+
+    assert result["defaults"] == []
+    assert "연체이자 계산 시작일" in result["open"]
+    assert result["contract"] == ["연체이자율: 계약의 연체이율 또는 사용자가 말한 연체이율"]
+
