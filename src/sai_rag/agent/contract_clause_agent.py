@@ -111,6 +111,7 @@ class ContractClauseAgent:
         slots: list[dict[str, Any]] | None = None,
         questions: list[dict[str, Any]] | None = None,
         answers: dict[str, str] | None = None,
+        references: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """
         on_event를 넘기면 단계가 진행될 때마다 이벤트를 알려준다.
@@ -225,15 +226,19 @@ class ContractClauseAgent:
                 ),
             )
 
-        found = self.find_references(
-            contract=contract,
-            message=message,
-            issues=issues,
-            candidate_top_k=resolved_candidate_top_k,
-            final_top_k=resolved_final_top_k,
-            on_event=on_event,
-            should_stop=should_stop,
-        )
+        if references is not None:
+            # 대화형: /prepare로 미리 찾아 둔 법령을 쓴다. (② 검색 + ③ 순위를 건너뛴다)
+            found = self._prepared_found(references)
+        else:
+            found = self.find_references(
+                contract=contract,
+                message=message,
+                issues=issues,
+                candidate_top_k=resolved_candidate_top_k,
+                final_top_k=resolved_final_top_k,
+                on_event=on_event,
+                should_stop=should_stop,
+            )
         search_plans = found["search_plans"]
         retrieval_timings = found["retrieval_timings"]
         collected_results = found["collected_results"]
@@ -787,6 +792,57 @@ class ContractClauseAgent:
             "guide": checked["guide"],
             "debug": {"performance": performance},
         }
+
+    def prepare_references(
+        self,
+        contract: dict[str, Any],
+        message: str,
+        issues: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """대화형 특약: 사용자가 답하는 동안 ② 검색 + ③ 순위를 미리 해 둔다."""
+
+        found = self.find_references(
+            contract=contract,
+            message=message,
+            issues=issues,
+            candidate_top_k=self.DEFAULT_CANDIDATE_TOP_K,
+            final_top_k=self.DEFAULT_FINAL_TOP_K,
+        )
+
+        # _rerank_query(사용자 원문이 섞임) 같은 내부 칸은 빼고 돌려준다. 백엔드가 이대로 보관한다.
+        return [
+            {key: value for key, value in reference.items() if not key.startswith("_")}
+            for reference in found["final_references"]
+        ]
+
+    def _prepared_found(
+        self,
+        references: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """미리 찾은 법령을 find_references() 결과와 같은 모양으로 만든다."""
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"retrieval=skipped(prepared) references={len(references)}"
+        )
+
+        return {
+            "search_plans": [],
+            "retrieval_timings": [],
+            "collected_results": [],
+            "vector_candidates": [],
+            "reranked_candidates": [],
+            "final_references": references,
+            "generation_references": references[:self.GENERATOR_REFERENCE_TOP_K],
+            "performance": {
+                "query_planning": 0.0,
+                "retrieval": 0.0,
+                "candidate_merge": 0.0,
+                "reranking": 0.0,
+                "hybrid_ranking": 0.0,
+            },
+        }
+
     def find_references(
         self,
         contract: dict[str, Any],

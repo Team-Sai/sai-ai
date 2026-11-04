@@ -153,6 +153,36 @@ class ClauseChatWriteRequest(
     )
 
 
+    # /prepare로 미리 찾은 근거 법령. 백엔드가 보관했다가 보낸다. 없으면 지금처럼 검색한다.
+    references: list[dict[str, Any]] | None = Field(
+        default=None,
+        max_length=10,
+    )
+
+
+class ClauseChatPrepareRequest(
+    BaseModel
+):
+    """
+    대화형 특약: 사용자가 답하는 동안 근거 법령을 미리 찾는 요청.
+    issues는 /understand가 돌려준 값을 그대로 보낸다.
+    """
+
+    contract: (
+        ContractClauseContext
+    )
+
+    message: str = Field(
+        min_length=1,
+        max_length=2000,
+    )
+
+    issues: list[dict[str, Any]] = Field(
+        min_length=1,
+    )
+
+
+
 class ContractReviewOptions(
     BaseModel
 ):
