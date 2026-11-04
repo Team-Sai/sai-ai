@@ -116,3 +116,27 @@ def test_marker_missing_in_clause_goes_to_llm(validator):
     run(validator, clause=clause, slots=[SLOT])
 
     assert len(validator.client.responses.calls) == 1
+
+
+def test_chat_conditions_go_into_llm_prompt_and_replace_candidates(validator):
+    clause = "채무자가 연체하면 [입력 필요: 연체이자 계산 대상]에 대해 연 12%의 지연이자를 지급한다."
+
+    try:
+        validator.validate(
+            message="연체하면 연 12%의 지연이자를 받고 싶어요",
+            contract=CONTRACT,
+            issues=[{"type": "LATE_INTEREST"}, {"type": "OTHER"}],
+            generated={"suggestedClause": clause, "warnings": [], "unresolvedDecisions": []},
+            references=REFERENCES,
+            slots=[],
+            confirmed={"slots": [], "questions": [], "answers": {}},
+        )
+    except LlmCalled:
+        pass
+
+    prompt = validator.client.responses.calls[0]["input"]
+
+    assert "대화에서 이미 정한 조건" in prompt
+    assert "연체이자는 연체된 금액에 대해 계산한다" in prompt
+    assert "[해당 쟁점의 결정사항 후보]\n[]" in prompt
+
