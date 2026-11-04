@@ -161,7 +161,12 @@ def _relay_events(
             # debug(검색 질의, 후보 점수, 내부 검증 사유 등)는 내부 확인용이다.
             # 기존 API는 백엔드 DTO가 이 필드를 버려서 브라우저까지 가지 않았지만,
             # 스트리밍은 백엔드가 그대로 중계하므로 여기서 뺀다.
+            debug = data.get("debug") or {}
             data = {key: value for key, value in data.items() if key != "debug"}
+            # 측정 도구용: 검증 방식과 LLM으로 간 이유(코드 이름)만 꺼낸다.
+            # 백엔드 필터 허용 목록에 없어서 브라우저까지는 가지 않는다.
+            data["validatorMode"] = debug.get("validatorMode")
+            data["llmReasons"] = (debug.get("validatorDebug") or {}).get("llmReasons") or []
             final_clause = (data.get("suggestedClause") or "").strip()
             # 검증에서 문장이 바뀌었는지 프론트가 직접 비교하지 않아도 되도록 알려준다.
             data["clauseRevised"] = bool(
