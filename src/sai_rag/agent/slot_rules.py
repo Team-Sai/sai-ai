@@ -14,6 +14,16 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from sai_rag.agent.decision_rules import (
+    DEFAULTS_CHANGE,
+    DEFAULTS_KEEP,
+    DEFAULTS_QUESTION_ID,
+    Decision,
+    defaults_for,
+    notices_for,
+    questions_for,
+)
+
 from sai_rag.agent.contract_context_formatter import ContractContextFormatter
 from sai_rag.agent.intent_value_normalizer import (
     find_amounts,
@@ -279,6 +289,27 @@ def find_field_edits(slots: list[dict[str, Any]], contract: dict[str, Any]) -> l
 
     return edits
 
+def _as_question(decision: Decision) -> dict[str, Any]:
+    return {
+        "id": decision.question_id,
+        "text": decision.question,
+        "options": list(decision.options),
+    }
+
+
+def build_defaults_question(texts: list[str]) -> dict[str, Any]:
+    """기본값을 몰래 쓰지 않고, 이해 확인 때 한 번에 보여 주고 확인받는다."""
+
+    lines = "\n".join(f"· {text}" for text in texts)
+
+    return {
+        "id": DEFAULTS_QUESTION_ID,
+        "text": f"따로 말씀이 없으면 이렇게 넣을게요:\n{lines}",
+        "options": [DEFAULTS_KEEP, DEFAULTS_CHANGE],
+    }
+
+
+
 
 def apply_slot_rules(
     *,
@@ -287,7 +318,9 @@ def apply_slot_rules(
     understanding: dict[str, Any],
     questions: list[dict[str, Any]],
     max_questions: int,
+    issue_types: list[str] | tuple[str, ...] = (),
 ) -> dict[str, Any]:
+    issue_types = list(issue_types)
     slots = understanding["slots"]
 
     for slot in slots:
@@ -305,24 +338,54 @@ def apply_slot_rules(
             "questions": [],
             "fieldEdits": field_edits,
             "guide": FIELD_EDIT_GUIDE.format(labels=labels),
+            "notices": [],
         }
 
-    rule_questions: list[dict[str, Any]] = []
+    # 1. 기존 값 확인 질문 (계약 값과 다른 "원래 값")
+    from_questions: list[dict[str, Any]] = []
 
     for slot in slots:
         question = build_from_question(slot, contract)
 
-        if question and question["id"] not in {q["id"] for q in rule_questions}:
-            rule_questions.append(question)
+        if question and question["id"] not in {q["id"] for q in from_questions}:
+            from_questions.append(question)
 
-    rule_ids = {question["id"] for question in rule_questions}
-    merged = rule_questions + [question for question in questions if question["id"] not in rule_ids]
+    used_ids = {question["id"] for question in from_questions}
+    llm_questions = [question for question in questions if question["id"] not in used_ids]
+    llm_text = " ".join(question.get("text") or "" for question in llm_questions)
+    llm_ids = {question["id"] for question in llm_questions}
+
+    # 2. 쟁점별 필수 질문. 사용자가 이미 말했거나 LLM이 비슷한 걸 물었으면 더하지 않는다.
+    required = [
+        decision
+        for decision in questions_for(issue_types)
+        if decision.question_id not in llm_ids
+        and not any(keyword in message or keyword in llm_text for keyword in decision.keywords)
+    ]
+    no_default = [_as_question(d) for d in required if not d.has_default]
+    with_default = [_as_question(d) for d in required if d.has_default]
+
+    # 3. 기존 값 확인 → 기본값 없는 필수 → LLM → 기본값 있는 필수 순서로, 앞에서부터 상한까지
+    kept = (from_questions + no_default + llm_questions + with_default)[:max_questions]
+    kept_ids = {question["id"] for question in kept}
+
+    # 4. 기본값: 표의 기본값 + 상한에 밀려 묻지 못한 질문의 기본값
+    default_texts = [d.text for d in defaults_for(issue_types)]
+    default_texts += [
+        d.text for d in required if d.has_default and d.question_id not in kept_ids
+    ]
+
+    if default_texts:
+        # 요약 확인이라 상한에 세지 않고 맨 끝에 둔다.
+        kept.append(build_defaults_question(default_texts))
 
     return {
         "understanding": understanding,
-        "questions": merged[:max_questions],
+        "questions": kept,
         "fieldEdits": [],
         "guide": None,
+        # 5. 쟁점별 필수 안내 (예: 보증이면 민법 제428조의2 등). 표의 문구 그대로, LLM 없음.
+        "notices": [f"{n.text} ({n.legal_ref})" for n in notices_for(issue_types)],
     }
 
 # ======================================

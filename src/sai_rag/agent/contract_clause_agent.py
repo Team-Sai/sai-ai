@@ -766,6 +766,7 @@ class ContractClauseAgent:
                 "understanding": None,
                 "questions": [],
                 "fieldEdits": [],
+                "notices": [],
                 "guide": self.OUT_OF_SCOPE_GUIDE,
                 "debug": {"performance": performance},
             }
@@ -776,6 +777,7 @@ class ContractClauseAgent:
             understanding=analyzed["understanding"],
             questions=analyzed["questions"],
             max_questions=self.issue_analyzer.MAX_QUESTIONS,
+            issue_types=[issue.get("type") for issue in analyzed["issues"]],
         )
 
         return {
@@ -784,6 +786,7 @@ class ContractClauseAgent:
             "understanding": checked["understanding"],
             "questions": checked["questions"],
             "fieldEdits": checked["fieldEdits"],
+            "notices": checked["notices"],
             "guide": checked["guide"],
             "debug": {"performance": performance},
         }

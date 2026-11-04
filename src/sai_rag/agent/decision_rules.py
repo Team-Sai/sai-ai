@@ -23,6 +23,12 @@ QUESTION = "QUESTION"
 REQUEST = "REQUEST"
 
 
+# 이해 확인 때 기본값을 한 번에 보여 주는 질문. 생성기(A-3)도 이 이름으로 답을 찾는다.
+DEFAULTS_QUESTION_ID = "confirm_defaults"
+DEFAULTS_KEEP = "좋아요"
+DEFAULTS_CHANGE = "바꿀래요"
+
+
 @dataclass(frozen=True)
 class Decision:
     name: str
