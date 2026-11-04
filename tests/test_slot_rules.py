@@ -33,13 +33,14 @@ def make_slot(**overrides):
     return slot
 
 
-def run(message, slots, questions=None):
+def run(message, slots, questions=None, issue_types=()):
     return apply_slot_rules(
         contract=CONTRACT,
         message=message,
         understanding={"summary": "요약", "slots": slots},
         questions=questions or [],
         max_questions=3,
+        issue_types=issue_types,
     )
 
 
@@ -203,4 +204,54 @@ def test_unexplained_number_in_message_blocks_rule_path():
     result = check_slots_against_clause(slots=[rate_slot()], message=message, clause=RATE_CLAUSE)
 
     assert result["explainsMessage"] is False
+
+
+
+
+# ---------------------------------------------------------------
+# 5. 쟁점별 필수 질문 · 기본값 · 필수 안내
+# ---------------------------------------------------------------
+
+def question_ids(result):
+    return [question["id"] for question in result["questions"]]
+
+
+def test_required_question_is_added_when_not_covered():
+    result = run("3개월 연속 연체하면 전부 갚게 해 주세요", [], issue_types=["DEFAULT"])
+
+    assert question_ids(result) == ["partial_payment", "confirm_defaults"]
+    assert "연체 횟수는 회차별로 센다" in result["questions"][-1]["text"]
+    assert result["questions"][-1]["options"] == ["좋아요", "바꿀래요"]
+
+
+def test_required_question_is_skipped_when_user_already_said_it():
+    result = run("일부만 내도 연체로 보고 3개월 연속이면 전부 갚게", [], issue_types=["DEFAULT"])
+
+    assert question_ids(result) == ["confirm_defaults"]
+
+
+def test_required_question_is_skipped_when_llm_asked_it():
+    llm = [{"id": "llm_partial", "text": "일부만 낸 달도 연체로 볼까요?", "options": ["예", "아니요"]}]
+
+    result = run("3개월 연속 연체하면 전부 갚게", [], llm, issue_types=["DEFAULT"])
+
+    assert question_ids(result) == ["llm_partial", "confirm_defaults"]
+
+
+def test_question_without_default_wins_and_overflow_becomes_default():
+    llm = [{"id": f"q{i}", "text": f"질문 {i}", "options": []} for i in range(2)]
+
+    result = run("약속을 어기면 위약금 50만원", [], llm, issue_types=["PENALTY"])
+
+    # 기본값 없는 질문(위약금과 연체이자) → LLM 질문 2개 → (상한 3개) → 기본값 있는 질문(발생 횟수)은 밀려남
+    assert question_ids(result) == ["penalty_with_late_interest", "q0", "q1", "confirm_defaults"]
+    assert "위약금은 한 번만 받는다" in result["questions"][-1]["text"]
+
+
+def test_guarantee_has_limit_question_and_legal_notices():
+    result = run("채무자의 형이 보증인이 되는 내용을 넣고 싶어요", [], issue_types=["GUARANTEE"])
+
+    assert question_ids(result)[0] == "guarantee_limit"
+    assert any("민법 제428조의2제1항" in notice for notice in result["notices"])
+    assert any("보증인 보호를 위한 특별법 제4조" in notice for notice in result["notices"])
 
