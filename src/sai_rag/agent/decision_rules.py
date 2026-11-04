@@ -266,3 +266,76 @@ def unverified_legal_refs() -> list[str]:
     refs = [d.legal_ref for ds in DECISIONS.values() for d in ds if d.legal_ref and not d.verified]
     refs += [n.legal_ref for ns in NOTICES.values() for n in ns if not n.verified]
     return list(dict.fromkeys(refs))
+
+
+def _answer_for(
+    decision: Decision,
+    message: str,
+    questions: list[dict],
+    answers: dict[str, str],
+) -> str | None:
+    """이 항목을 사용자가 이미 정했는지. 답(또는 "요청에 있음")이면 그 값, 아니면 None."""
+
+    if decision.question_id in answers:
+        return answers[decision.question_id]
+
+    # LLM이 비슷한 질문을 해서 규칙 질문을 안 더한 경우: 그 질문의 답을 쓴다.
+    for question in questions:
+        text = question.get("text") or ""
+
+        if question.get("id") in answers and any(keyword in text for keyword in decision.keywords):
+            return answers[question["id"]]
+
+    if any(keyword in message for keyword in decision.keywords):
+        return "요청에 있음"
+
+    return None
+
+
+def writing_guide(
+    *,
+    issue_types: list[str],
+    message: str,
+    questions: list[dict],
+    answers: dict[str, str],
+    unknown_answer: str,
+) -> dict[str, list[str]]:
+    """
+    대화형 작성 때 생성기에 알려 줄 세 묶음.
+    - contract: 계약 정보에서 그대로 쓸 값
+    - defaults: 따로 정하지 않았으므로 이대로 쓸 기본 문구 ([입력 필요]로 남기지 않음)
+    - open:     아직 정하지 않은 것 (이것만 [입력 필요] 후보)
+    """
+
+    defaults_rejected = answers.get(DEFAULTS_QUESTION_ID) == DEFAULTS_CHANGE
+    guide: dict[str, list[str]] = {"contract": [], "defaults": [], "open": []}
+
+    for decision in decisions_for(issue_types):
+        if decision.kind == CONTRACT:
+            guide["contract"].append(f"{decision.name}: {decision.text}")
+            continue
+
+        if decision.kind == REQUEST:
+            guide["open"].append(decision.name)
+            continue
+
+        if decision.kind == DEFAULT:
+            guide["open" if defaults_rejected else "defaults"].append(
+                decision.name if defaults_rejected else decision.text
+            )
+            continue
+
+        # QUESTION
+        answer = _answer_for(decision, message, questions, answers)
+
+        if answer == unknown_answer:
+            guide["open"].append(decision.name)
+        elif answer is not None:
+            continue  # 확정 조건(답)이나 요청으로 이미 정해졌다.
+        elif decision.has_default and not defaults_rejected:
+            guide["defaults"].append(decision.text)
+        else:
+            guide["open"].append(decision.name)
+
+    return guide
+
