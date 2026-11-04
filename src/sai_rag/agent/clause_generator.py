@@ -681,6 +681,12 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
                 + "\n".join(f"- {line}" for line in guide["contract"])
             )
 
+        if guide.get("request"):
+            parts.append(
+                "사용자 요청과 확정 조건에서 가져와 쓸 것 (이름이 달라도 같은 뜻이면 그 값을 쓰고 [입력 필요]로 남기지 않는다):\n"
+                + "\n".join(f"- {line}" for line in guide["request"])
+            )
+
         if guide["defaults"]:
             parts.append(
                 "기본 문구 (사용자가 따로 정하지 않았으므로 이대로 쓰고 [입력 필요]로 남기지 않는다):\n"
@@ -689,11 +695,11 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
 
         if guide["open"]:
             parts.append(
-                "아직 정하지 않은 것 (조항에 꼭 필요할 때만 [입력 필요: 이름]으로 남긴다):\n"
+                "아직 정하지 않은 것 ([입력 필요: 이름]은 이 목록의 이름 그대로만 쓰고, 목록에 없는 것은 [입력 필요]로 만들지 않는다):\n"
                 + "\n".join(f"- {line}" for line in guide["open"])
             )
         else:
-            parts.append("이번 조항에는 [입력 필요] 칸을 만들지 않는다.")
+            parts.append("이번 조항에는 [입력 필요] 칸을 하나도 만들지 않는다. 위 값과 기본 문구로 문장을 끝까지 쓴다.")
 
         return "\n\n".join(parts)
 

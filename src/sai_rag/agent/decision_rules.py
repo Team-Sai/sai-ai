@@ -303,12 +303,13 @@ def writing_guide(
     """
     대화형 작성 때 생성기에 알려 줄 세 묶음.
     - contract: 계약 정보에서 그대로 쓸 값
+    - request:  사용자 요청·확정 조건에서 가져올 것 ([입력 필요]로 남기지 않음)
     - defaults: 따로 정하지 않았으므로 이대로 쓸 기본 문구 ([입력 필요]로 남기지 않음)
     - open:     아직 정하지 않은 것 (이것만 [입력 필요] 후보)
     """
 
     defaults_rejected = answers.get(DEFAULTS_QUESTION_ID) == DEFAULTS_CHANGE
-    guide: dict[str, list[str]] = {"contract": [], "defaults": [], "open": []}
+    guide: dict[str, list[str]] = {"contract": [], "request": [], "defaults": [], "open": []}
 
     for decision in decisions_for(issue_types):
         if decision.kind == CONTRACT:
@@ -316,7 +317,8 @@ def writing_guide(
             continue
 
         if decision.kind == REQUEST:
-            guide["open"].append(decision.name)
+            # 사용자가 요청에서 말한 것이다. 이해 확인에서 확정했으므로 [입력 필요] 후보가 아니다.
+            guide["request"].append(decision.name)
             continue
 
         if decision.kind == DEFAULT:
