@@ -1296,6 +1296,15 @@ class ContractClauseAgent:
                 ),
                 should_stop=should_stop,
                 slots=slots,
+                confirmed=(
+                    {
+                        "slots": slots,
+                        "questions": questions or [],
+                        "answers": answers or {},
+                    }
+                    if slots is not None
+                    else None
+                ),
             )
         )
 
