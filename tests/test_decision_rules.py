@@ -112,3 +112,9 @@ def test_rejected_defaults_become_open_and_contract_values_are_listed():
     assert "연체이자 계산 시작일" in result["open"]
     assert result["contract"] == ["연체이자율: 계약의 연체이율 또는 사용자가 말한 연체이율"]
 
+def test_request_items_are_never_open():
+    result = guide(["ACCELERATION"], message="3개월 연속 연체하면 남은 원금을 전부 갚게 해 주세요")
+
+    assert "기한의 이익 상실 또는 일시변제 발생 요건" in result["request"]
+    assert "기한의 이익 상실 또는 일시변제 발생 요건" not in result["open"]
+
