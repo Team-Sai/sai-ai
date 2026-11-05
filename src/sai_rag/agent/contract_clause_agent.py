@@ -226,8 +226,8 @@ class ContractClauseAgent:
                 ),
             )
 
-        if references is not None:
-            # 대화형: /prepare로 미리 찾아 둔 법령을 쓴다. (② 검색 + ③ 순위를 건너뛴다)
+        if references:
+            # 대화형: /prepare로 미리 찾아 둔 법령을 쓴다. 비어 있으면 아래에서 지금처럼 검색한다.
             found = self._prepared_found(references)
         else:
             found = self.find_references(

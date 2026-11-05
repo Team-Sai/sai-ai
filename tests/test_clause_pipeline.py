@@ -217,3 +217,25 @@ def test_prepared_found_keeps_shape_and_cuts_generation_references():
     assert len(found["generation_references"]) == 3
     assert found["performance"]["retrieval"] == 0.0
 
+
+def test_prepared_references_skip_search_but_empty_list_searches_again():
+    agent, retriever = make_agent()
+
+    agent.suggest_clause(
+        contract=CONTRACT,
+        message="중도상환 수수료 없이 해 주세요",
+        issues=ANALYZER_OUTPUT["issues"],
+        slots=[],
+        references=[dict(LAW)],
+    )
+    assert retriever.calls == 0
+
+    agent.suggest_clause(
+        contract=CONTRACT,
+        message="중도상환 수수료 없이 해 주세요",
+        issues=ANALYZER_OUTPUT["issues"],
+        slots=[],
+        references=[],
+    )
+    assert retriever.calls > 0
+
