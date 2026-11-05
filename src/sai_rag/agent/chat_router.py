@@ -214,7 +214,8 @@ def route_reply(
 
     # 3. 모름·나중에 → [입력 필요] 칸으로 남긴다
     if any(phrase in text for phrase in UNKNOWN_PHRASES):
-        if len(pending) != 1:
+        # 화면은 남은 질문 중 첫 번째만 보여 주므로, "나중에"는 그 질문에 대한 답이다.
+        if not pending:
             return done("AMBIGUOUS")
 
         answers[pending[0]["id"]] = UNKNOWN_ANSWER

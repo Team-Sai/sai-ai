@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from time import perf_counter
 from typing import Any
 
@@ -27,6 +28,9 @@ from sai_rag.agent.decision_rules import (
 from sai_rag.agent.openai_options import (
     openai_call_options,
 )
+
+# 본문 맨 앞의 "제○조(제목)", "제7조 (제목)" 같은 조 머리말. 화면이 따로 붙이므로 지운다.
+ARTICLE_HEADING = re.compile(r"^\s*제\s*[○◯0-9]+\s*조\s*(\([^)]*\))?\s*")
 
 
 load_dotenv()
@@ -536,6 +540,10 @@ class ClauseGenerator:
 "1년 뒤"처럼 기간으로 요청된 날짜는 실제 날짜로 계산해 쓴다.
 기준일은 사용자가 말한 날짜(예: "지급일로부터"), "오늘로부터"면 오늘 날짜,
 기준이 없으면 계약 시작일(startDate)로 한다.
+
+11. suggestedClause에는 "제○조(제목)", "제7조(…)" 같은 조 번호·제목 머리말을 쓰지 않는다.
+조 번호와 제목은 계약서 화면이 붙인다. 제목은 title에만 쓴다.
+
 
 반드시 JSON 객체 하나만 출력한다.
 키는 아래 순서 그대로 출력한다. (suggestedClause를 가장 먼저 쓴다)
@@ -1138,6 +1146,10 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
             )
             or ""
         ).strip()
+
+
+        # 화면이 "제N조(제목)"를 붙이므로, 본문 앞의 조 머리말은 규칙으로 지운다.
+        suggested_clause = ARTICLE_HEADING.sub("", suggested_clause, count=1).strip()
 
         warnings = (
             result.get(
