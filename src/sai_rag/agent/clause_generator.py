@@ -30,7 +30,7 @@ from sai_rag.agent.openai_options import (
 )
 
 # 본문 맨 앞의 "제○조(제목)", "제7조 (제목)" 같은 조 머리말. 화면이 따로 붙이므로 지운다.
-ARTICLE_HEADING = re.compile(r"^\s*제\s*[○◯0-9]+\s*조\s*(\([^)]*\))?\s*")
+ARTICLE_HEADING = re.compile(r"^\s*제\s*[○◯0-9]+\s*조\s*[.:]?\s*([(\[【][^)\]】]*[)\]】])?\s*")
 
 
 load_dotenv()

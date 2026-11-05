@@ -80,3 +80,22 @@ def test_clause_without_heading_is_unchanged():
 
     assert result["suggestedClause"] == "채무자는 매월 20일에 갚는다."
 
+
+def test_article_heading_with_dot_colon_or_brackets_is_removed():
+    for heading in ("제1조. (중도상환) ", "제 2 조: ", "제1조 [중도상환] ", "제○조【중도상환】"):
+        result = ClauseGenerator._normalize_result(
+            {"suggestedClause": heading + "채무자는 언제든지 상환할 수 있다.", "title": "중도상환"},
+            message="중도상환",
+        )
+
+        assert result["suggestedClause"] == "채무자는 언제든지 상환할 수 있다."
+
+
+def test_sentence_starting_with_je_is_not_removed():
+    result = ClauseGenerator._normalize_result(
+        {"suggestedClause": "제한 조건 없이 언제든지 상환할 수 있다.", "title": "중도상환"},
+        message="중도상환",
+    )
+
+    assert result["suggestedClause"] == "제한 조건 없이 언제든지 상환할 수 있다."
+
