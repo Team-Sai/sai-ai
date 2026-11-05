@@ -20,6 +20,10 @@ from sai_rag.agent.chat_router import (
     UNKNOWN_ANSWER,
 )
 
+from sai_rag.agent.decision_rules import (
+    writing_guide,
+)
+
 from sai_rag.agent.openai_options import (
     openai_call_options,
 )
@@ -251,6 +255,23 @@ class ClauseGenerator:
             )
         )
 
+        # 대화형: 표대로 계약값·기본값으로 정해진 것은 후보에서 빼고, 아직 정하지 않은 것만 후보로 둔다.
+        guide = (
+            writing_guide(
+                issue_types=issue_types,
+                message=message,
+                questions=confirmed.get("questions") or [],
+                answers=confirmed.get("answers") or {},
+                unknown_answer=UNKNOWN_ANSWER,
+            )
+            if confirmed is not None
+            else None
+        )
+
+        if guide is not None:
+            decision_candidates = guide["open"]
+
+
         compact_contract = (
             self._compact_contract(
                 contract
@@ -291,6 +312,11 @@ class ClauseGenerator:
                 confirmed_text=(
                     self._format_confirmed(
                         confirmed
+                    )
+                ),
+                writing_text=(
+                    self._format_writing_guide(
+                        guide
                     )
                 ),
             )
@@ -546,6 +572,7 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
         ],
         decision_candidates: list[str],
         confirmed_text: str = "",
+        writing_text: str = "",
     ) -> str:
         contract_json = (
             json.dumps(
@@ -594,9 +621,15 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
         today = today_kst().isoformat()
 
         confirmed_section = (
-            "\n사용자가 확정한 조건 (반드시 그대로 반영한다):\n"
+            "\n사용자가 확정한 조건 (반드시 그대로 반영하고 [입력 필요]로 남기지 않는다):\n"
             f"{confirmed_text}\n"
             if confirmed_text
+            else ""
+        )
+
+        writing_section = (
+            f"\n{writing_text}\n"
+            if writing_text
             else ""
         )
 
@@ -607,6 +640,8 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
 {message}
 
 {confirmed_section}
+
+{writing_section}
 
 계약정보:
 {contract_json}
@@ -628,6 +663,46 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
 
 위 정보만 사용해 조항을 작성한다.
 """.strip()
+
+    @staticmethod
+    def _format_writing_guide(
+        guide: dict[str, list[str]] | None,
+    ) -> str:
+        """대화형 작성: 계약값·기본 문구·아직 정하지 않은 것을 생성 프롬프트용 글로."""
+
+        if guide is None:
+            return ""
+
+        parts: list[str] = []
+
+        if guide["contract"]:
+            parts.append(
+                "계약 정보에서 그대로 쓸 값 (다른 값을 지어내지 않는다):\n"
+                + "\n".join(f"- {line}" for line in guide["contract"])
+            )
+
+        if guide.get("request"):
+            parts.append(
+                "사용자 요청과 확정 조건에서 가져와 쓸 것 (이름이 달라도 같은 뜻이면 그 값을 쓰고 [입력 필요]로 남기지 않는다):\n"
+                + "\n".join(f"- {line}" for line in guide["request"])
+            )
+
+        if guide["defaults"]:
+            parts.append(
+                "기본 문구 (사용자가 따로 정하지 않았으므로 이대로 쓰고 [입력 필요]로 남기지 않는다):\n"
+                + "\n".join(f"- {line}" for line in guide["defaults"])
+            )
+
+        if guide["open"]:
+            parts.append(
+                "아직 정하지 않은 것 ([입력 필요: 이름]은 이 목록의 이름 그대로만 쓰고, 목록에 없는 것은 [입력 필요]로 만들지 않는다):\n"
+                + "\n".join(f"- {line}" for line in guide["open"])
+            )
+        else:
+            parts.append("이번 조항에는 [입력 필요] 칸을 하나도 만들지 않는다. 위 값과 기본 문구로 문장을 끝까지 쓴다.")
+
+        return "\n\n".join(parts)
+
 
     @staticmethod
     def _format_confirmed(

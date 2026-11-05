@@ -17,6 +17,9 @@ from sai_rag.agent.clause_validator import (
 from sai_rag.agent.issue_analyzer import (
     ClauseIssueAnalyzer,
 )
+from sai_rag.agent.decision_rules import (
+    notices_for,
+)
 from sai_rag.agent.slot_rules import (
     apply_slot_rules,
 )
@@ -316,6 +319,18 @@ class ContractClauseAgent:
                 generator_warnings,
             )
         )
+
+        if slots is not None:
+            # 대화형: 쟁점별 필수 안내(예: 보증의 서면 요건)를 결과 경고에 항상 붙인다.
+            # 검증 뒤에 붙여야 검증기가 이 문장 때문에 LLM으로 가지 않는다.
+            final_warnings = self._merge_warnings(
+                final_warnings,
+                [
+                    f"{notice.text} ({notice.legal_ref})"
+                    for notice in notices_for([issue.get("type") for issue in issues])
+                ],
+            )
+
 
         validation_status = str(
             validation.get(
@@ -771,6 +786,7 @@ class ContractClauseAgent:
                 "understanding": None,
                 "questions": [],
                 "fieldEdits": [],
+                "notices": [],
                 "guide": self.OUT_OF_SCOPE_GUIDE,
                 "debug": {"performance": performance},
             }
@@ -781,6 +797,7 @@ class ContractClauseAgent:
             understanding=analyzed["understanding"],
             questions=analyzed["questions"],
             max_questions=self.issue_analyzer.MAX_QUESTIONS,
+            issue_types=[issue.get("type") for issue in analyzed["issues"]],
         )
 
         return {
@@ -789,6 +806,7 @@ class ContractClauseAgent:
             "understanding": checked["understanding"],
             "questions": checked["questions"],
             "fieldEdits": checked["fieldEdits"],
+            "notices": checked["notices"],
             "guide": checked["guide"],
             "debug": {"performance": performance},
         }
@@ -1334,6 +1352,15 @@ class ContractClauseAgent:
                 ),
                 should_stop=should_stop,
                 slots=slots,
+                confirmed=(
+                    {
+                        "slots": slots,
+                        "questions": questions or [],
+                        "answers": answers or {},
+                    }
+                    if slots is not None
+                    else None
+                ),
             )
         )
 

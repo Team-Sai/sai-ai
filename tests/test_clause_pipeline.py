@@ -182,6 +182,22 @@ def test_write_with_given_issues_skips_analysis_and_passes_confirmed_values():
     assert result["debug"]["performance"]["issueAnalysisMs"] == 0.0
 
 
+def test_guarantee_notices_are_always_added_to_chat_warnings():
+    agent, _ = make_agent()
+
+    result = agent.suggest_clause(
+        contract=CONTRACT,
+        message="형이 보증인이 되게 해 주세요",
+        issues=[{"type": "GUARANTEE", "reason": "보증", "searchTerms": ["보증"]}],
+        slots=[],
+        questions=[],
+        answers={},
+    )
+
+    assert any("민법 제428조의2제1항" in warning for warning in result["warnings"])
+    assert any("보증인 보호를 위한 특별법 제4조" in warning for warning in result["warnings"])
+
+
 def test_prepare_references_drops_internal_fields():
     from types import SimpleNamespace
 

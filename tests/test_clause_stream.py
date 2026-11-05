@@ -141,6 +141,24 @@ def test_final_does_not_include_debug():
     assert "debug" not in final
     assert final["suggestedClause"] == DRAFT
 
+def test_final_keeps_only_validator_mode_and_llm_reasons_from_debug():
+    class ModeAgent(FakeAgent):
+        def suggest_clause(self, **kwargs):
+            result = super().suggest_clause(**kwargs)
+            result["debug"] = {
+                "validatorMode": "LLM",
+                "searchPlans": ["내부 검색 질의"],
+                "validatorDebug": {"llmReasons": ["slot_not_reflected"], "slots": ["내부"]},
+            }
+            return result
+
+    final = run_stream(ModeAgent())[0][-1][1]
+
+    assert final["validatorMode"] == "LLM"
+    assert final["llmReasons"] == ["slot_not_reflected"]
+    assert "debug" not in final
+    assert "searchPlans" not in final
+
 
 def test_value_error_becomes_400_error_event():
     events, _ = run_stream(FakeAgent(error=ValueError("특약 요청 내용을 입력해주세요.")))

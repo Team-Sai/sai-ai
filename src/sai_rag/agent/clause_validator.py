@@ -8,8 +8,15 @@ from typing import Any, Callable
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from sai_rag.agent.chat_router import (
+    UNKNOWN_ANSWER,
+)
 from sai_rag.agent.clause_generator import (
     ClauseGenerationCancelled,
+    ClauseGenerator,
+)
+from sai_rag.agent.decision_rules import (
+    writing_guide,
 )
 from sai_rag.agent.openai_options import (
     openai_call_options,
@@ -291,6 +298,7 @@ class ClauseValidator:
         references: list[dict[str, Any]],
         should_stop: Callable[[], bool] | None = None,
         slots: list[dict[str, Any]] | None = None,
+        confirmed: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Generator 결과를 검증한다.
@@ -885,10 +893,32 @@ class ClauseValidator:
             f"reasons={','.join(llm_reasons)}"
         )
 
-        decision_candidates = (
-            self._collect_decision_candidates(
-                issue_types
+        # 대화형: 생성기와 같은 메모(확정 조건·작성 안내)를 주고, 후보는 아직 정하지 않은 것만 준다.
+        guide = (
+            writing_guide(
+                issue_types=issue_types,
+                message=message,
+                questions=confirmed.get("questions") or [],
+                answers=confirmed.get("answers") or {},
+                unknown_answer=UNKNOWN_ANSWER,
             )
+            if confirmed is not None
+            else None
+        )
+
+        decision_candidates = (
+            guide["open"]
+            if guide is not None
+            else self._collect_decision_candidates(issue_types)
+        )
+
+        chat_text = "\n\n".join(
+            text
+            for text in (
+                ClauseGenerator._format_confirmed(confirmed),
+                ClauseGenerator._format_writing_guide(guide),
+            )
+            if text
         )
 
         system_prompt = (
@@ -928,6 +958,9 @@ class ClauseValidator:
                 ),
                 semantic_intent_review=(
                     semantic_intent_review
+                ),
+                chat_text=(
+                    chat_text
                 ),
             )
         )
@@ -2342,7 +2375,14 @@ warnings에 남긴다.
         contract_clause_conflicts: list[str],
         user_intent_conflicts: list[str],
         semantic_intent_review: bool,
+        chat_text: str = "",
     ) -> str:
+        chat_section = (
+            "[대화에서 이미 정한 조건 — 이 내용은 [입력 필요]로 바꾸지 않는다]\n"
+            f"{chat_text}\n"
+            if chat_text
+            else ""
+        )
         reference_summaries = [
             self._reference_summary(
                 reference
@@ -2387,6 +2427,8 @@ warnings에 남긴다.
 
 [Generator가 미결정이라고 표시했지만 Slot이 없는 조건]
 {json.dumps(missing_slots, ensure_ascii=False, indent=2)}
+
+{chat_section}
 
 [해당 쟁점의 결정사항 후보]
 {json.dumps(decision_candidates, ensure_ascii=False, indent=2)}

@@ -51,3 +51,14 @@ def test_items_that_are_not_dicts_are_skipped():
 
     assert text == "- 이자율: 7%\n- 어디에 적용할까요? → 남은 원금"
 
+
+def test_writing_guide_text_has_sections_and_no_slot_rule():
+    text = ClauseGenerator._format_writing_guide(
+        {"contract": ["약정이율: 계약의 약정이율"], "defaults": ["이자는 남은 원금에 대해 계산한다"], "open": []}
+    )
+
+    assert "계약 정보에서 그대로 쓸 값" in text
+    assert "- 이자는 남은 원금에 대해 계산한다" in text
+    assert "[입력 필요] 칸을 하나도 만들지 않는다" in text
+    assert ClauseGenerator._format_writing_guide(None) == ""
+
