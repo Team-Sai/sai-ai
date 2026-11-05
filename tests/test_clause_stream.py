@@ -318,6 +318,7 @@ def test_backend_routes_exist():
         "/rag/contracts/clause-chat/route",
         "/rag/contracts/clause-chat/prepare",
         "/rag/contracts/clause-chat/write/stream",
+        "/rag/contracts/clause-review",
     } <= set(_post_paths())
 
 
@@ -457,7 +458,8 @@ def test_generator_streams_clause_text_while_writing_json():
 
     assert calls[0]["stream"] is True
     assert "".join(received) == "제1조 채무자는\n언제든지 \"상환\"할 수 있다."
-    assert result["suggestedClause"].startswith("제1조 채무자는")
+    # 실시간 글자(on_delta)는 받은 그대로 보여 주고, 최종 조항에서는 조 머리말을 지운다. (#28)
+    assert result["suggestedClause"].startswith("채무자는")
     assert fake_stream.closed
 
 
