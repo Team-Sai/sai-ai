@@ -26,6 +26,7 @@ from sai_rag.agent.contract_clause_agent import (
 )
 
 from sai_rag.api.schemas import (
+    ClauseChatPrepareRequest,
     ClauseChatRouteRequest,
     ClauseChatWriteRequest,
     ContractClauseSuggestionRequest,
@@ -415,6 +416,42 @@ def route_contract_clause_reply(
     return result
 
 
+@app.post(
+    "/rag/contracts/clause-chat/prepare"
+)
+def prepare_contract_clause(
+    request: Request,
+    body: ClauseChatPrepareRequest,
+):
+    """
+    대화형 특약: 사용자가 답하는 동안 ② 검색 + ③ 순위를 미리 한다.
+    백엔드가 결과를 보관했다가 /write/stream에 references로 같이 보낸다.
+    """
+
+    try:
+        references = request.app.state.clause_agent.prepare_references(
+            contract=to_agent_contract(
+                body.contract.model_dump()
+            ),
+            message=body.message,
+            issues=body.issues,
+        )
+
+    except Exception as exc:
+        print(
+            "[Clause Prepare Error]",
+            repr(exc),
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="근거 법령을 미리 찾는 중 오류가 발생했습니다.",
+        ) from exc
+
+    print(f"[CHAT] prepare references={len(references)}")
+
+    return {"references": references}
+
 
 @app.post(
     "/rag/contracts/clause-suggestions/stream"
@@ -486,6 +523,7 @@ def write_contract_clause_stream(
                 "slots": body.slots,
                 "questions": body.questions,
                 "answers": body.answers,
+                "references": body.references,
             },
         ),
         media_type="text/event-stream",

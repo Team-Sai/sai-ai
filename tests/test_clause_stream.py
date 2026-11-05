@@ -316,6 +316,7 @@ def test_backend_routes_exist():
         "/rag/contracts/clause-suggestions/stream",
         "/rag/contracts/clause-chat/understand",
         "/rag/contracts/clause-chat/route",
+        "/rag/contracts/clause-chat/prepare",
         "/rag/contracts/clause-chat/write/stream",
     } <= set(_post_paths())
 
@@ -566,3 +567,45 @@ def test_references_event_is_relayed_before_generation():
         {"references": [{"lawName": "민법", "articleNumber": "제468조"}]}
     ]
     assert names.index("references") < names.index("delta")
+
+
+def test_write_stream_endpoint_passes_prepared_references():
+    from sai_rag.api import main
+
+    agent = FakeAgent(final_clause=FINAL)
+    main.app.state.clause_agent = agent
+
+    response = TestClient(main.app).post(
+        "/rag/contracts/clause-chat/write/stream",
+        json={
+            "contract": CONTRACT,
+            "message": "중도상환 수수료 없이",
+            "issues": [{"type": "EARLY_REPAYMENT"}],
+            "references": [{"document_id": "민법-468"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert agent.options["references"] == [{"document_id": "민법-468"}]
+
+
+def test_prepare_endpoint_returns_references():
+    from sai_rag.api import main
+
+    class PrepareAgent(FakeAgent):
+        def prepare_references(self, *, contract, message, issues):
+            self.received = (message, issues)
+            return [{"document_id": "민법-398"}]
+
+    agent = PrepareAgent()
+    main.app.state.clause_agent = agent
+
+    response = TestClient(main.app).post(
+        "/rag/contracts/clause-chat/prepare",
+        json={"contract": CONTRACT, "message": "위약금", "issues": [{"type": "PENALTY"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"references": [{"document_id": "민법-398"}]}
+    assert agent.received == ("위약금", [{"type": "PENALTY"}])
+
