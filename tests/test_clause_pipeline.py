@@ -180,3 +180,62 @@ def test_write_with_given_issues_skips_analysis_and_passes_confirmed_values():
     assert agent.generator.last_kwargs["confirmed"]["slots"] == [WRITE_SLOT]
     assert agent.validator.last_kwargs["slots"] == [WRITE_SLOT]
     assert result["debug"]["performance"]["issueAnalysisMs"] == 0.0
+
+
+def test_prepare_references_drops_internal_fields():
+    from types import SimpleNamespace
+
+    from sai_rag.agent.contract_clause_agent import ContractClauseAgent
+
+    fake = SimpleNamespace(
+        DEFAULT_CANDIDATE_TOP_K=8,
+        DEFAULT_FINAL_TOP_K=5,
+        find_references=lambda **kwargs: {
+            "final_references": [{"document_id": "민법-398", "_rerank_query": "사용자 원문"}],
+        },
+    )
+
+    result = ContractClauseAgent.prepare_references(
+        fake, contract={}, message="원문", issues=[{"type": "PENALTY"}]
+    )
+
+    assert result == [{"document_id": "민법-398"}]
+
+
+def test_prepared_found_keeps_shape_and_cuts_generation_references():
+    from types import SimpleNamespace
+
+    from sai_rag.agent.contract_clause_agent import ContractClauseAgent
+
+    references = [{"document_id": str(number)} for number in range(5)]
+
+    found = ContractClauseAgent._prepared_found(
+        SimpleNamespace(GENERATOR_REFERENCE_TOP_K=3), references
+    )
+
+    assert found["final_references"] == references
+    assert len(found["generation_references"]) == 3
+    assert found["performance"]["retrieval"] == 0.0
+
+
+def test_prepared_references_skip_search_but_empty_list_searches_again():
+    agent, retriever = make_agent()
+
+    agent.suggest_clause(
+        contract=CONTRACT,
+        message="중도상환 수수료 없이 해 주세요",
+        issues=ANALYZER_OUTPUT["issues"],
+        slots=[],
+        references=[dict(LAW)],
+    )
+    assert retriever.calls == 0
+
+    agent.suggest_clause(
+        contract=CONTRACT,
+        message="중도상환 수수료 없이 해 주세요",
+        issues=ANALYZER_OUTPUT["issues"],
+        slots=[],
+        references=[],
+    )
+    assert retriever.calls > 0
+
