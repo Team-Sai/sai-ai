@@ -165,6 +165,16 @@ def test_unknown_answer_is_recorded():
     assert result["answers"] == {"partial_payment": UNKNOWN_ANSWER}
 
 
+def test_unknown_answers_the_first_pending_question_when_several_remain():
+    other = {**PARTIAL_QUESTION, "id": "other_question"}
+
+    result = run("나중에 정할게요", questions=[PARTIAL_QUESTION, other])
+
+    assert result["kind"] == "UNKNOWN"
+    assert result["answers"] == {"partial_payment": UNKNOWN_ANSWER}
+    assert [q["id"] for q in result["pendingQuestions"]] == ["other_question"]
+
+
 def test_from_question_yes_uses_contract_value():
     result = run("맞아요", slots=[RATE_SLOT], questions=[FROM_QUESTION])
 

@@ -62,3 +62,21 @@ def test_writing_guide_text_has_sections_and_no_slot_rule():
     assert "[입력 필요] 칸을 하나도 만들지 않는다" in text
     assert ClauseGenerator._format_writing_guide(None) == ""
 
+
+def test_article_heading_is_removed_from_clause_body():
+    result = ClauseGenerator._normalize_result(
+        {"suggestedClause": "제○조(형의 연대보증) ① 형은 채무를 연대보증한다.", "title": "연대보증"},
+        message="형이 보증인이 되게 해 주세요",
+    )
+
+    assert result["suggestedClause"] == "① 형은 채무를 연대보증한다."
+
+
+def test_clause_without_heading_is_unchanged():
+    result = ClauseGenerator._normalize_result(
+        {"suggestedClause": "채무자는 매월 20일에 갚는다.", "title": "상환"},
+        message="매월 20일에 갚게 해 주세요",
+    )
+
+    assert result["suggestedClause"] == "채무자는 매월 20일에 갚는다."
+
