@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 import re
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import Any, Callable
+
+from sai_rag.agent.demo_scenarios import (
+    STREAM_CHUNK_CHARS,
+    demo_key,
+    find_demo_scenario,
+    seconds,
+)
 
 from sai_rag.agent.clause_generator import (
     ClauseGenerationCancelled,
@@ -115,6 +122,7 @@ class ContractClauseAgent:
         questions: list[dict[str, Any]] | None = None,
         answers: dict[str, str] | None = None,
         references: list[dict[str, Any]] | None = None,
+        demo: bool = False,
     ) -> dict[str, Any]:
         """
         on_event를 넘기면 단계가 진행될 때마다 이벤트를 알려준다.
@@ -132,6 +140,19 @@ class ContractClauseAgent:
         if not message.strip():
             raise ValueError(
                 "특약 요청 내용을 입력해주세요."
+            )
+
+        # 발표 시연 작성: LLM 생성·검증 대신 정해 둔 문장을 정해 둔 시간에 맞춰 흘려보낸다.
+        scenario = find_demo_scenario(message, demo)
+
+        if scenario is not None and issues is not None:
+            return self._demo_write(
+                scenario=scenario,
+                contract=contract,
+                message=message,
+                issues=issues,
+                on_event=on_event,
+                should_stop=should_stop,
             )
 
         resolved_candidate_top_k = (
@@ -751,6 +772,7 @@ class ContractClauseAgent:
         self,
         contract: dict[str, Any],
         message: str,
+        demo: bool = False,
     ) -> dict[str, Any]:
         """
         대화형 특약 1턴(이해 확인).
@@ -767,10 +789,23 @@ class ContractClauseAgent:
             f"message_chars={len(message.strip())}"
         )
 
-        analyzed = self.analyze_issues(
-            contract=contract,
-            message=message,
-        )
+        scenario = find_demo_scenario(message, demo)
+
+        if scenario is not None:
+            # 발표 시연: LLM 대신 정해 둔 쟁점·이해 내용. 질문·기본값·안내는 아래 규칙이 진짜로 만든다.
+            print("[시연] 이해 확인")
+            sleep(seconds(scenario, "understand"))
+            analyzed = {
+                "issues": scenario["issues"],
+                "understanding": scenario["understanding"],
+                "questions": [],
+                "performance": {"issue_analysis": seconds(scenario, "understand")},
+            }
+        else:
+            analyzed = self.analyze_issues(
+                contract=contract,
+                message=message,
+            )
 
         performance = {
             "issueAnalysisMs": round(
@@ -874,14 +909,96 @@ class ContractClauseAgent:
         }
 
 
+    def _demo_write(
+        self,
+        *,
+        scenario: dict[str, Any],
+        contract: dict[str, Any],
+        message: str,
+        issues: list[dict[str, Any]],
+        on_event: ClauseEventCallback | None,
+        should_stop: Callable[[], bool] | None,
+    ) -> dict[str, Any]:
+        """발표 시연 작성. 이벤트 순서와 모양은 진짜 작성과 같다."""
+
+        print("[시연] 조항 작성")
+
+        self._emit(on_event, "progress", {"step": "retrieval"})
+
+        references = self.prepare_references(
+            contract=contract, message=message, issues=issues, demo=True
+        )
+        public_references = [self._to_public_reference(reference) for reference in references]
+
+        sleep(seconds(scenario, "references"))
+        self._raise_if_stopped(should_stop)
+        self._emit(on_event, "references", {"references": public_references})
+
+        self._emit(on_event, "progress", {"step": "generation"})
+        sleep(seconds(scenario, "firstText"))
+
+        clause = scenario["clause"]
+        chunks = [
+            clause[start:start + STREAM_CHUNK_CHARS]
+            for start in range(0, len(clause), STREAM_CHUNK_CHARS)
+        ]
+
+        for chunk in chunks:
+            self._raise_if_stopped(should_stop)
+            self._emit(on_event, "delta", {"text": chunk})
+            sleep(seconds(scenario, "stream") / max(len(chunks), 1))
+
+        warnings = scenario["warnings"] + [
+            f"{notice.text} ({notice.legal_ref})"
+            for notice in notices_for([issue.get("type") for issue in issues])
+        ]
+
+        draft = {
+            "title": scenario["title"],
+            "summary": scenario["summary"],
+            "suggestedClause": clause,
+            "warnings": warnings,
+            "unresolvedDecisions": scenario["unresolvedDecisions"],
+            "references": public_references,
+        }
+        self._emit(on_event, "draft", draft)
+
+        self._emit(on_event, "progress", {"step": "validation"})
+        sleep(seconds(scenario, "validation"))
+        self._raise_if_stopped(should_stop)
+
+        return {
+            **draft,
+            "message": message,
+            "issues": issues,
+            "validation": {"status": "PASS", "isSafeToSuggest": True, "checks": []},
+            "debug": {"validatorMode": "DEMO"},
+        }
+
+
+
     def prepare_references(
         self,
         contract: dict[str, Any],
         message: str,
         issues: list[dict[str, Any]],
+        demo: bool = False,
     ) -> list[dict[str, Any]]:
         """대화형 특약: 사용자가 답하는 동안 ② 검색 + ③ 순위를 미리 해 둔다."""
 
+        is_demo = find_demo_scenario(message, demo) is not None
+        cache: dict[str, list[dict[str, Any]]] = self.__dict__.setdefault("_demo_references", {})
+
+        # 발표 시연: 시나리오에 근거 법령을 저장해 두었으면 검색하지 않고 그대로 쓴다. (CPU 0)
+        scenario = find_demo_scenario(message, demo)
+
+        if scenario is not None and scenario.get("references"):
+            return scenario["references"]
+
+
+        # 발표 시연: 같은 퀵 질문의 근거 법령은 한 번 진짜로 찾은 뒤 다시 쓴다.
+        if is_demo and demo_key(message) in cache:
+            return cache[demo_key(message)]
         found = self.find_references(
             contract=contract,
             message=message,
@@ -891,10 +1008,15 @@ class ContractClauseAgent:
         )
 
         # _rerank_query(사용자 원문이 섞임) 같은 내부 칸은 빼고 돌려준다. 백엔드가 이대로 보관한다.
-        return [
+        references = [
             {key: value for key, value in reference.items() if not key.startswith("_")}
             for reference in found["final_references"]
         ]
+
+        if is_demo:
+            cache[demo_key(message)] = references
+
+        return references
 
     def _prepared_found(
         self,

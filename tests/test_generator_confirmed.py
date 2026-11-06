@@ -108,3 +108,10 @@ def test_system_prompt_asks_slot_names_to_show_value_kind():
     assert '금액: "~금액"' in prompt
     assert "목록에 있는 이름은 그 이름 그대로 쓴다" in prompt
 
+
+def test_system_prompt_keeps_slots_to_value_positions():
+    prompt = ClauseGenerator._build_system_prompt(None)
+
+    assert "값(금액·비율·날짜·일수·개월·횟수·방법)이 들어갈 자리에만" in prompt
+    assert "기준·여부·관계를 칸으로 미루지 않는다" in prompt
+

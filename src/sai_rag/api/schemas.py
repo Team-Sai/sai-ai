@@ -90,6 +90,9 @@ class ContractClauseSuggestionRequest(
         max_length=2000,
     )
 
+    # 발표 시연 표시. 서버에서 SAI_DEMO_MODE로 허용했을 때만 쓴다.
+    demo: bool = False
+
 class ClauseChatRouteRequest(
     BaseModel
 ):
@@ -159,6 +162,9 @@ class ClauseChatWriteRequest(
         max_length=10,
     )
 
+    # 발표 시연 표시. 서버에서 SAI_DEMO_MODE로 허용했을 때만 쓴다.
+    demo: bool = False
+
 
 class ClauseChatPrepareRequest(
     BaseModel
@@ -180,6 +186,9 @@ class ClauseChatPrepareRequest(
     issues: list[dict[str, Any]] = Field(
         min_length=1,
     )
+
+    # 발표 시연 표시. 서버에서 SAI_DEMO_MODE로 허용했을 때만 쓴다.
+    demo: bool = False
 
 
 class ClauseReviewRequest(

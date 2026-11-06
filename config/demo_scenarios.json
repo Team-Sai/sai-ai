@@ -1,0 +1,605 @@
+{
+  "scenarios": [
+    {
+      "question": "3개월 연속 연체하면 남은 원금을 전부 갚게 하고 싶어요.",
+      "timing": {
+        "understand": 3.0,
+        "references": 2.0,
+        "firstText": 3.2,
+        "stream": 3.5,
+        "validation": 1.8
+      },
+      "issues": [
+        {
+          "type": "DEFAULT",
+          "reason": "연체 판단 기준이 필요합니다.",
+          "searchTerms": [
+            "연체",
+            "이행지체"
+          ]
+        },
+        {
+          "type": "ACCELERATION",
+          "reason": "남은 원금을 한꺼번에 갚게 하는 조건입니다.",
+          "searchTerms": [
+            "기한의 이익 상실",
+            "일시 변제"
+          ]
+        }
+      ],
+      "understanding": {
+        "summary": "3개월 연속 연체하면 남은 원금을 전부 갚도록 하는 특약을 원하시는 걸로 이해했어요.",
+        "slots": [
+          {
+            "name": "연체 조건",
+            "kind": "MONTHS",
+            "value": "3개월",
+            "from": null,
+            "field": null,
+            "condition": "3개월 연속 연체 시",
+            "inMessage": true,
+            "confirmed": false
+          }
+        ]
+      },
+      "title": "연속 연체 시 기한의 이익 상실",
+      "summary": "3개월 연속 연체하면 미리 알린 뒤 7일이 지나 남은 원금 전액을 갚도록 정합니다.",
+      "clause": "채무자가 각 회차 상환기일까지 해당 회차 상환금을 전액 지급하지 않은 경우 그 회차를 연체로 본다. 일부 금액만 지급한 경우에도 해당 회차는 연체로 보며, 연체 횟수는 회차별로 산정한다. 연속된 3회차(3개월)의 상환금이 모두 연체된 경우, 채권자는 서면 또는 전자적 방법으로 채무자에게 알린다. 채무자는 그 통지를 받은 날부터 7일이 지난 후 기한의 이익을 상실하고, 남은 원금 전액을 즉시 변제한다.",
+      "warnings": [],
+      "unresolvedDecisions": [],
+      "references": [
+        {
+          "score": 0.6355547,
+          "chunk_id": "001706:0468001:0",
+          "document_id": "001706:0468001",
+          "text": "민법\n제468조 변제기전의 변제\n\n제468조(변제기전의 변제) 당사자의 특별한 의사표시가 없으면 변제기전이라도 채무자는 변제할 수 있다. 그러나 상대방의 손해는 배상하여야 한다.",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제468조",
+            "article_title": "변제기전의 변제",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": -4.130631446838379,
+          "vector_normalized": 1.0,
+          "rerank_normalized": 0.6555222315360729,
+          "final_score": 0.758865562075251
+        },
+        {
+          "score": 0.6158186,
+          "chunk_id": "001706:0397001:0",
+          "document_id": "001706:0397001",
+          "text": "민법\n제397조 금전채무불이행에 대한 특칙\n\n제397조(금전채무불이행에 대한 특칙)\n①금전채무불이행의 손해배상액은 법정이율에 의한다. 그러나 법령의 제한에 위반하지 아니한 약정이율이 있으면 그 이율에 의한다.\n②전항의 손해배상에 관하여는 채권자는 손해의 증명을 요하지 아니하고 채무자는 과실없음을 항변하지 못한다.",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제397조",
+            "article_title": "금전채무불이행에 대한 특칙",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": -3.1269426345825195,
+          "vector_normalized": 0.0,
+          "rerank_normalized": 1.0,
+          "final_score": 0.7
+        },
+        {
+          "score": 0.625791,
+          "chunk_id": "001706:0477001:0",
+          "document_id": "001706:0477001",
+          "text": "민법\n제477조 법정변제충당\n\n제477조(법정변제충당) 당사자가 변제에 충당할 채무를 지정하지 아니한 때에는 다음 각호의 규정에 의한다.\n1. 채무중에 이행기가 도래한 것과 도래하지 아니한 것이 있으면 이행기가 도래한 채무의 변제에 충당한다.\n2. 채무전부의 이행기가 도래하였거나 도래하지 아니한 때에는 채무자에게 변제이익이 많은 채무의 변제에 충당한다.\n3. 채무자에게 변제이익이 같으면 이행기가 먼저 도래한 채무나 먼저 도래할 채무의 변제에 충당한다.\n4. 전2호의 사항이 같은 때에는 그 채무액에 비례하여 각 채무의 변제에 충당한다.",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제477조",
+            "article_title": "법정변제충당",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": -4.626605987548828,
+          "vector_normalized": 0.505287265467847,
+          "rerank_normalized": 0.4852979539386624,
+          "final_score": 0.49129474739741774
+        },
+        {
+          "score": 0.6210803,
+          "chunk_id": "001706:0376001:0",
+          "document_id": "001706:0376001",
+          "text": "민법\n제376조 금전채권\n\n제376조(금전채권) 채권의 목적이 어느 종류의 통화로 지급할 것인 경우에 그 통화가 변제기에 강제통용력을 잃은 때에는 채무자는 다른 통화로 변제하여야 한다.",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제376조",
+            "article_title": "금전채권",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": -6.040596008300781,
+          "vector_normalized": 0.26660282426619375,
+          "rerank_normalized": 0.0,
+          "final_score": 0.07998084727985812
+        },
+        {
+          "score": 0.61715287,
+          "chunk_id": "001706:0475001:0",
+          "document_id": "001706:0475001",
+          "text": "민법\n제475조 채권증서반환청구권\n\n제475조(채권증서반환청구권) 채권증서가 있는 경우에 변제자가 채무전부를 변제한 때에는 채권증서의 반환을 청구할 수 있다. 채권이 변제 이외의 사유로 전부 소멸한 때에도 같다.",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제475조",
+            "article_title": "채권증서반환청구권",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": -5.995851039886475,
+          "vector_normalized": 0.0676055553022111,
+          "rerank_normalized": 0.015356997787696792,
+          "final_score": 0.031031565042051085
+        }
+      ]
+    },
+    {
+      "question": "만기 전에 원금을 먼저 갚을 수 있게 하고 싶어요.",
+      "timing": {
+        "understand": 2.5,
+        "references": 2.0,
+        "firstText": 3.0,
+        "stream": 2.5,
+        "validation": 1.5
+      },
+      "issues": [
+        {
+          "type": "EARLY_REPAYMENT",
+          "reason": "만기 전 변제를 허용하는 조건입니다.",
+          "searchTerms": [
+            "중도상환",
+            "변제기 전 변제"
+          ]
+        }
+      ],
+      "understanding": {
+        "summary": "만기 전에 원금을 먼저 갚을 수 있도록 하는 조항을 원하시는 걸로 이해했어요.",
+        "slots": []
+      },
+      "title": "만기 전 중도상환",
+      "summary": "만기 전에도 원금 전액을 수수료 없이 갚을 수 있도록 정합니다.",
+      "clause": "채무자는 만기일 전에도 원금 전액을 변제할 수 있으며, 중도상환수수료는 부과하지 않는다. 채무자는 중도상환 전에 서면 또는 전자적 방법으로 채권자에게 알리고, 중도상환일까지 경과한 날짜를 기준으로 계산한 이자와 남은 원금 전액을 변제한다.",
+      "warnings": [],
+      "unresolvedDecisions": [],
+      "references": [
+        {
+          "score": 0.6844293,
+          "chunk_id": "001706:0468001:0",
+          "document_id": "001706:0468001",
+          "text": "민법\n제468조 변제기전의 변제\n\n제468조(변제기전의 변제) 당사자의 특별한 의사표시가 없으면 변제기전이라도 채무자는 변제할 수 있다. 그러나 상대방의 손해는 배상하여야 한다.",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제468조",
+            "article_title": "변제기전의 변제",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": -0.9916810989379883,
+          "vector_normalized": 1.0,
+          "rerank_normalized": 1.0,
+          "final_score": 1.0
+        },
+        {
+          "score": 0.658257,
+          "chunk_id": "001706:0460001:0",
+          "document_id": "001706:0460001",
+          "text": "민법\n제460조 변제제공의 방법\n\n제460조(변제제공의 방법) 변제는 채무내용에 좇은 현실제공으로 이를 하여야 한다. 그러나 채권자가 미리 변제받기를 거절하거나 채무의 이행에 채권자의 행위를 요하는 경우에는 변제준비의 완료를 통지하고 그 수령을 최고하면 된다.",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제460조",
+            "article_title": "변제제공의 방법",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": -1.797775149345398,
+          "vector_normalized": 0.640817990184776,
+          "rerank_normalized": 0.7474720718292952,
+          "final_score": 0.7154758473359395
+        },
+        {
+          "score": 0.6127814,
+          "chunk_id": "001706:0477001:0",
+          "document_id": "001706:0477001",
+          "text": "민법\n제477조 법정변제충당\n\n제477조(법정변제충당) 당사자가 변제에 충당할 채무를 지정하지 아니한 때에는 다음 각호의 규정에 의한다.\n1. 채무중에 이행기가 도래한 것과 도래하지 아니한 것이 있으면 이행기가 도래한 채무의 변제에 충당한다.\n2. 채무전부의 이행기가 도래하였거나 도래하지 아니한 때에는 채무자에게 변제이익이 많은 채무의 변제에 충당한다.\n3. 채무자에게 변제이익이 같으면 이행기가 먼저 도래한 채무나 먼저 도래할 채무의 변제에 충당한다.\n4. 전2호의 사항이 같은 때에는 그 채무액에 비례하여 각 채무의 변제에 충당한다.",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제477조",
+            "article_title": "법정변제충당",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": -1.8920420408248901,
+          "vector_normalized": 0.01672238507734719,
+          "rerank_normalized": 0.7179407500333118,
+          "final_score": 0.5075752405465224
+        },
+        {
+          "score": 0.61277926,
+          "chunk_id": "001706:0476001:0",
+          "document_id": "001706:0476001",
+          "text": "민법\n제476조 지정변제충당\n\n제476조(지정변제충당)\n①채무자가 동일한 채권자에 대하여 같은 종류를 목적으로 한 수개의 채무를 부담한 경우에 변제의 제공이 그 채무전부를 소멸하게 하지 못하는 때에는 변제자는 그 당시 어느 채무를 지정하여 그 변제에 충당할 수 있다.\n②변제자가 전항의 지정을 하지 아니할 때에는 변제받는 자는 그 당시 어느 채무를 지정하여 변제에 충당할 수 있다. 그러나 변제자가 그 충당에 대하여 즉시 이의를 한 때에는 그러하지 아니하다.\n③전2항의 변제충당은 상대방에 대한 의사표시로써 한다.",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제476조",
+            "article_title": "지정변제충당",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": -3.8026580810546875,
+          "vector_normalized": 0.016693016259895197,
+          "rerank_normalized": 0.11939531985045224,
+          "final_score": 0.08858462877328512
+        },
+        {
+          "score": 0.6115629,
+          "chunk_id": "001706:0475001:0",
+          "document_id": "001706:0475001",
+          "text": "민법\n제475조 채권증서반환청구권\n\n제475조(채권증서반환청구권) 채권증서가 있는 경우에 변제자가 채무전부를 변제한 때에는 채권증서의 반환을 청구할 수 있다. 채권이 변제 이외의 사유로 전부 소멸한 때에도 같다.",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제475조",
+            "article_title": "채권증서반환청구권",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": -4.183779716491699,
+          "vector_normalized": 0.0,
+          "rerank_normalized": 0.0,
+          "final_score": 0.0
+        }
+      ]
+    },
+    {
+      "question": "연체했을 때 위약금을 정하고 싶어요.",
+      "timing": {
+        "understand": 2.8,
+        "references": 2.0,
+        "firstText": 3.0,
+        "stream": 2.0,
+        "validation": 1.8
+      },
+      "issues": [
+        {
+          "type": "PENALTY",
+          "reason": "연체 시 위약금을 정하는 조건입니다.",
+          "searchTerms": [
+            "위약금",
+            "손해배상액의 예정"
+          ]
+        }
+      ],
+      "understanding": {
+        "summary": "연체했을 때 위약금을 내도록 하는 조항을 원하시는 걸로 이해했어요.",
+        "slots": []
+      },
+      "title": "연체 시 위약금",
+      "summary": "상환기일까지 갚지 않으면 위약금을 한 번 내도록 하고, 금액은 직접 정하도록 남깁니다.",
+      "clause": "채무자가 상환기일까지 상환금을 지급하지 않아 연체한 경우, 채무자는 채권자에게 위약금으로 [입력 필요: 위약금 금액]을 한 번 지급한다. 이 경우 연체이자는 따로 청구하지 않는다.",
+      "warnings": [
+        "민법 제398조에 따라 위약금 약정은 손해배상액의 예정으로 추정되며, 예정액이 부당히 과다한 경우 법원이 감액할 수 있습니다."
+      ],
+      "unresolvedDecisions": [
+        {
+          "name": "위약금 금액",
+          "reason": "위약금으로 받을 금액이 정해지지 않았습니다."
+        }
+      ],
+      "references": [
+        {
+          "score": 0.78846526,
+          "chunk_id": "001706:0398001:0",
+          "document_id": "001706:0398001",
+          "text": "민법\n제398조 배상액의 예정\n\n제398조(배상액의 예정)\n①당사자는 채무불이행에 관한 손해배상액을 예정할 수 있다.\n②손해배상의 예정액이 부당히 과다한 경우에는 법원은 적당히 감액할 수 있다.\n③손해배상액의 예정은 이행의 청구나 계약의 해제에 영향을 미치지 아니한다.\n④위약금의 약정은 손해배상액의 예정으로 추정한다.\n⑤당사자가 금전이 아닌 것으로써 손해의 배상에 충당할 것을 예정한 경우에도 전4항의 규정을 준용한다.",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제398조",
+            "article_title": "배상액의 예정",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": 2.65352201461792,
+          "vector_normalized": 1.0,
+          "rerank_normalized": 1.0,
+          "final_score": 1.0
+        },
+        {
+          "score": 0.62767196,
+          "chunk_id": "001706:0393001:0",
+          "document_id": "001706:0393001",
+          "text": "민법\n제393조 손해배상의 범위\n\n제393조(손해배상의 범위)\n①채무불이행으로 인한 손해배상은 통상의 손해를 그 한도로 한다.\n②특별한 사정으로 인한 손해는 채무자가 그 사정을 알았거나 알 수 있었을 때에 한하여 배상의 책임이 있다.",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제393조",
+            "article_title": "손해배상의 범위",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": -3.457658529281616,
+          "vector_normalized": 0.11656867569225338,
+          "rerank_normalized": 0.17158704216084214,
+          "final_score": 0.1550815322202655
+        },
+        {
+          "score": 0.6064553,
+          "chunk_id": "001706:0396001:0",
+          "document_id": "001706:0396001",
+          "text": "민법\n제396조 과실상계\n\n제396조(과실상계) 채무불이행에 관하여 채권자에게 과실이 있는 때에는 법원은 손해배상의 책임 및 그 금액을 정함에 이를 참작하여야 한다.",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제396조",
+            "article_title": "과실상계",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": -3.8691887855529785,
+          "vector_normalized": 0.0,
+          "rerank_normalized": 0.11580125831939025,
+          "final_score": 0.08106088082357317
+        },
+        {
+          "score": 0.63482684,
+          "chunk_id": "001706:0395001:0",
+          "document_id": "001706:0395001",
+          "text": "민법\n제395조 이행지체와 전보배상\n\n제395조(이행지체와 전보배상) 채무자가 채무의 이행을 지체한 경우에 채권자가 상당한 기간을 정하여 이행을 최고하여도 그 기간내에 이행하지 아니하거나 지체후의 이행이 채권자에게 이익이 없는 때에는 채권자는 수령을 거절하고 이행에 갈음한 손해배상을 청구할 수 있다. <개정 2014.12.30>",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제395조",
+            "article_title": "이행지체와 전보배상",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": -4.691069602966309,
+          "vector_normalized": 0.15587905189364354,
+          "rerank_normalized": 0.0043896065029004954,
+          "final_score": 0.04983644012012341
+        },
+        {
+          "score": 0.63587606,
+          "chunk_id": "001706:0392001:0",
+          "document_id": "001706:0392001",
+          "text": "민법\n제392조 이행지체 중의 손해배상\n\n제392조(이행지체 중의 손해배상) 채무자는 자기에게 과실이 없는 경우에도 그 이행지체 중에 생긴 손해를 배상하여야 한다. 그러나 채무자가 이행기에 이행하여도 손해를 면할 수 없는 경우에는 그러하지 아니하다.",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제392조",
+            "article_title": "이행지체 중의 손해배상",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": -4.723451614379883,
+          "vector_normalized": 0.1616436814776507,
+          "rerank_normalized": 0.0,
+          "final_score": 0.04849310444329521
+        }
+      ]
+    },
+    {
+      "question": "채무자 소유 자동차를 담보로 잡고 싶어요.",
+      "timing": {
+        "understand": 2.5,
+        "references": 2.0,
+        "firstText": 3.0,
+        "stream": 2.5,
+        "validation": 1.5
+      },
+      "issues": [
+        {
+          "type": "COLLATERAL",
+          "reason": "자동차를 담보로 제공하는 조건입니다.",
+          "searchTerms": [
+            "담보",
+            "자동차 저당"
+          ]
+        }
+      ],
+      "understanding": {
+        "summary": "채무자 소유 자동차를 대여금의 담보로 잡는 조항을 원하시는 걸로 이해했어요.",
+        "slots": [
+          {
+            "name": "담보물",
+            "kind": "CHOICE",
+            "value": "채무자 소유 자동차",
+            "from": null,
+            "field": null,
+            "condition": null,
+            "inMessage": true,
+            "confirmed": false
+          }
+        ]
+      },
+      "title": "자동차 담보 제공",
+      "summary": "채무 전부를 위해 채무자 소유 자동차를 담보로 제공하고, 갚지 못하면 처분해 충당하도록 정합니다.",
+      "clause": "채무자는 이 계약에 따른 채무 전부를 담보하기 위하여 채무자 소유 자동차를 계약 체결일에 담보로 제공한다. 채무자가 변제기까지 채무를 변제하지 않으면, 채권자는 담보 자동차를 처분하고 그 처분대금을 이 계약에 따른 채무의 변제에 충당한다.",
+      "warnings": [],
+      "unresolvedDecisions": [],
+      "references": [
+        {
+          "score": 0.5824714,
+          "chunk_id": "001706:0432001:0",
+          "document_id": "001706:0432001",
+          "text": "민법\n제432조 타담보의 제공\n\n제432조(타담보의 제공) 채무자는 다른 상당한 담보를 제공함으로써 보증인을 세울 의무를 면할 수 있다.",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제432조",
+            "article_title": "타담보의 제공",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": -1.5013959407806396,
+          "vector_normalized": 0.9296397298815626,
+          "rerank_normalized": 1.0,
+          "final_score": 0.9788919189644687
+        },
+        {
+          "score": 0.58489615,
+          "chunk_id": "001706:0602001:0",
+          "document_id": "001706:0602001",
+          "text": "민법\n제602조 대주의 담보책임\n\n제602조(대주의 담보책임)\n①이자있는 소비대차의 목적물에 하자가 있는 경우에는 제580조 내지 제582조의 규정을 준용한다.\n②이자없는 소비대차의 경우에는 차주는 하자있는 물건의 가액으로 반환할 수 있다. 그러나 대주가 그 하자를 알고 차주에게 고지하지 아니한 때에는 전항과 같다.",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제602조",
+            "article_title": "대주의 담보책임",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": -5.544539451599121,
+          "vector_normalized": 1.0,
+          "rerank_normalized": 0.4439968253257354,
+          "final_score": 0.6107977777280147
+        },
+        {
+          "score": 0.5559151,
+          "chunk_id": "001706:0388001:0",
+          "document_id": "001706:0388001",
+          "text": "민법\n제388조 기한의 이익의 상실\n\n제388조(기한의 이익의 상실) 채무자는 다음 각호의 경우에는 기한의 이익을 주장하지 못한다.\n1. 채무자가 담보를 손상, 감소 또는 멸실하게 한 때\n2. 채무자가 담보제공의 의무를 이행하지 아니한 때",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제388조",
+            "article_title": "기한의 이익의 상실",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": -3.5980916023254395,
+          "vector_normalized": 0.1590413418637146,
+          "rerank_normalized": 0.7116675574276928,
+          "final_score": 0.5458796927584993
+        },
+        {
+          "score": 0.5678534,
+          "chunk_id": "001706:0603001:0",
+          "document_id": "001706:0603001",
+          "text": "민법\n제603조 반환시기\n\n제603조(반환시기)\n①차주는 약정시기에 차용물과 같은 종류, 품질 및 수량의 물건을 반환하여야 한다.\n②반환시기의 약정이 없는 때에는 대주는 상당한 기간을 정하여 반환을 최고하여야 한다. 그러나 차주는 언제든지 반환할 수 있다.",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제603조",
+            "article_title": "반환시기",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": -7.540239334106445,
+          "vector_normalized": 0.5054613904274622,
+          "rerank_normalized": 0.16955307446651796,
+          "final_score": 0.2703255692548012
+        },
+        {
+          "score": 0.55043423,
+          "chunk_id": "001706:0600001:0",
+          "document_id": "001706:0600001",
+          "text": "민법\n제600조 이자계산의 시기\n\n제600조(이자계산의 시기) 이자있는 소비대차는 차주가 목적물의 인도를 받은 때로부터 이자를 계산하여야 하며 차주가 그 책임있는 사유로 수령을 지체할 때에는 대주가 이행을 제공한 때로부터 이자를 계산하여야 한다.",
+          "metadata": {
+            "source_type": "LAW",
+            "document_kind": "ARTICLE",
+            "law_id": "001706",
+            "law_name": "민법",
+            "article_number": "제600조",
+            "article_title": "이자계산의 시기",
+            "effective_date": "2026-03-17",
+            "promulgation_date": "2026-03-17",
+            "revision_type": "일부개정",
+            "source": "MOLEG"
+          },
+          "rerank_score": -8.773195266723633,
+          "vector_normalized": 0.0,
+          "rerank_normalized": 0.0,
+          "final_score": 0.0
+        }
+      ]
+    }
+  ]
+}

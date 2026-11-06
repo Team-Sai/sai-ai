@@ -147,3 +147,13 @@ def test_vague_rate_phrase_is_warned_by_rule(validator):
     assert validator.client.responses.calls == []
     ambiguity = next(check for check in result["checks"] if check["type"] == "AMBIGUITY")
     assert ambiguity["status"] == "WARNING"
+
+
+def test_slot_used_as_basis_is_warned_by_rule(validator):
+    clause = CLAUSE + " 위약금은 [입력 필요: 위약금 산정 기준]에 따라 산정한다."
+
+    result = run(validator, clause=clause, slots=[SLOT])
+
+    ambiguity = next(check for check in result["checks"] if check["type"] == "AMBIGUITY")
+    assert ambiguity["status"] == "WARNING"
+
