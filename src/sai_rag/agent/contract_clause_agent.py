@@ -989,6 +989,13 @@ class ContractClauseAgent:
         is_demo = find_demo_scenario(message, demo) is not None
         cache: dict[str, list[dict[str, Any]]] = self.__dict__.setdefault("_demo_references", {})
 
+        # 발표 시연: 시나리오에 근거 법령을 저장해 두었으면 검색하지 않고 그대로 쓴다. (CPU 0)
+        scenario = find_demo_scenario(message, demo)
+
+        if scenario is not None and scenario.get("references"):
+            return scenario["references"]
+
+
         # 발표 시연: 같은 퀵 질문의 근거 법령은 한 번 진짜로 찾은 뒤 다시 쓴다.
         if is_demo and demo_key(message) in cache:
             return cache[demo_key(message)]

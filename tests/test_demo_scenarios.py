@@ -1,4 +1,5 @@
 import os
+import json
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key-not-real")
 
@@ -70,3 +71,24 @@ def test_demo_write_streams_like_real(monkeypatch):
     assert events[0] == "progress"
     assert "references" in events and "delta" in events and "draft" in events
     assert result["suggestedClause"].startswith("채무자가 각 회차 상환기일까지")
+
+def test_demo_uses_saved_references_without_search(monkeypatch, tmp_path):
+    config = tmp_path / "demo.json"
+    config.write_text(
+        json.dumps(
+            {"scenarios": [{"question": QUICK, "issues": [{"type": "DEFAULT"}],
+                            "references": [{"document_id": "민법-388"}]}]},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(demo_scenarios.DEMO_ENV, "1")
+    monkeypatch.setenv(demo_scenarios.CONFIG_ENV, str(config))
+    agent, retriever = make_agent()
+
+    result = agent.prepare_references(
+        contract=CONTRACT, message=QUICK, issues=[{"type": "DEFAULT"}], demo=True
+    )
+
+    assert result == [{"document_id": "민법-388"}]
+    assert retriever.calls == 0
