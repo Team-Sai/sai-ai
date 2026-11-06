@@ -141,8 +141,9 @@ def test_chat_conditions_go_into_llm_prompt_and_replace_candidates(validator):
     assert "[해당 쟁점의 결정사항 후보]\n[]" in prompt
 
 
-def test_vague_rate_phrase_goes_to_llm(validator):
-    run(validator, clause=CLAUSE + " 위약금은 연체된 금액에 일정 비율을 적용하여 산정한다.", slots=[SLOT])
+def test_vague_rate_phrase_is_warned_by_rule(validator):
+    result = run(validator, clause=CLAUSE + " 위약금은 연체된 금액에 일정 비율을 적용하여 산정한다.", slots=[SLOT])
 
-    assert len(validator.client.responses.calls) == 1
-
+    assert validator.client.responses.calls == []
+    ambiguity = next(check for check in result["checks"] if check["type"] == "AMBIGUITY")
+    assert ambiguity["status"] == "WARNING"
