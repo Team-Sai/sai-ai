@@ -4,10 +4,10 @@
       "question": "3개월 연속 연체하면 남은 원금을 전부 갚게 하고 싶어요.",
       "timing": {
         "understand": 3.0,
-        "references": 0.6,
+        "references": 2.0,
         "firstText": 3.2,
         "stream": 3.5,
-        "validation": 0.8
+        "validation": 1.8
       },
       "issues": [
         {
@@ -164,10 +164,10 @@
       "question": "만기 전에 원금을 먼저 갚을 수 있게 하고 싶어요.",
       "timing": {
         "understand": 2.5,
-        "references": 0.5,
+        "references": 2.0,
         "firstText": 3.0,
         "stream": 2.5,
-        "validation": 0.5
+        "validation": 1.5
       },
       "issues": [
         {
@@ -305,10 +305,10 @@
       "question": "연체했을 때 위약금을 정하고 싶어요.",
       "timing": {
         "understand": 2.8,
-        "references": 0.6,
+        "references": 2.0,
         "firstText": 3.0,
         "stream": 2.0,
-        "validation": 0.8
+        "validation": 1.8
       },
       "issues": [
         {
@@ -453,10 +453,10 @@
       "question": "채무자 소유 자동차를 담보로 잡고 싶어요.",
       "timing": {
         "understand": 2.5,
-        "references": 0.5,
+        "references": 2.0,
         "firstText": 3.0,
         "stream": 2.5,
-        "validation": 0.5
+        "validation": 1.5
       },
       "issues": [
         {
