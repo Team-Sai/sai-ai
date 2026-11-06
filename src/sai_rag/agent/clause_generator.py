@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from time import perf_counter
 from typing import Any
 
@@ -27,6 +28,9 @@ from sai_rag.agent.decision_rules import (
 from sai_rag.agent.openai_options import (
     openai_call_options,
 )
+
+# 본문 맨 앞의 "제○조(제목)", "제7조 (제목)" 같은 조 머리말. 화면이 따로 붙이므로 지운다.
+ARTICLE_HEADING = re.compile(r"^\s*제\s*[○◯0-9]+\s*조\s*[.:]?\s*([(\[【][^)\]】]*[)\]】])?\s*")
 
 
 load_dotenv()
@@ -513,10 +517,23 @@ class ClauseGenerator:
 - 추후 합의한다
 - 당사자가 정한다
 - 당사자가 합의한다
+- 일정 비율
+- 일정 금액
+- 일정 기간
 
 단, 사용자가 해당 표현 자체를 명시적으로 요청한 경우는 제외한다.
 
 4. 한 Slot에는 하나의 결정값만 넣는다.
+조건명은 값의 종류가 드러나게 짓는다.
+- 비율: "~율" (예: 중도상환 수수료율, 위약금률)
+- 금액: "~금액" (예: 위약금 금액)
+- 날짜: "~날짜" (예: 담보 제공 날짜)
+- 일수: "~일수" (예: 통지 일수)
+- 개월: "~개월" (예: 유예 개월)
+- 횟수: "~횟수" (예: 연체 횟수)
+- 통지 방법: "~통지 방법"
+그 밖의 선택·설명은 짧은 이름으로 짓는다.
+단, '아직 정하지 않은 것' 목록에 있는 이름은 그 이름 그대로 쓴다.
 
 5. 검색된 법령 근거에 없는 법률·조문·판례를 만들지 않는다.
 
@@ -536,6 +553,10 @@ class ClauseGenerator:
 "1년 뒤"처럼 기간으로 요청된 날짜는 실제 날짜로 계산해 쓴다.
 기준일은 사용자가 말한 날짜(예: "지급일로부터"), "오늘로부터"면 오늘 날짜,
 기준이 없으면 계약 시작일(startDate)로 한다.
+
+11. suggestedClause에는 "제○조(제목)", "제7조(…)" 같은 조 번호·제목 머리말을 쓰지 않는다.
+조 번호와 제목은 계약서 화면이 붙인다. 제목은 title에만 쓴다.
+
 
 반드시 JSON 객체 하나만 출력한다.
 키는 아래 순서 그대로 출력한다. (suggestedClause를 가장 먼저 쓴다)
@@ -621,8 +642,8 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
         today = today_kst().isoformat()
 
         confirmed_section = (
-            "\n사용자가 확정한 조건 (반드시 그대로 반영하고 [입력 필요]로 남기지 않는다):\n"
-            f"{confirmed_text}\n"
+            "\n사용자가 확정한 조건 (대화에서 정하거나 바꾼 값이다. 요청 원문과 값이 다르면 반드시 이 값을 따른다. "
+            "'아직 정하지 않음'인 항목만 [입력 필요: 짧은 이름]으로 남기고, 나머지는 [입력 필요]로 남기지 않는다):\n"            f"{confirmed_text}\n"
             if confirmed_text
             else ""
         )
@@ -695,12 +716,15 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
 
         if guide["open"]:
             parts.append(
-                "아직 정하지 않은 것 ([입력 필요: 이름]은 이 목록의 이름 그대로만 쓰고, 목록에 없는 것은 [입력 필요]로 만들지 않는다):\n"
-                + "\n".join(f"- {line}" for line in guide["open"])
+                "아직 정하지 않은 것 ([입력 필요: 이름]은 이 목록의 이름 그대로 쓰고, 목록에 없는 것은 [입력 필요]로 만들지 않는다. "
+                "단, 확정 조건에서 '아직 정하지 않음'인 항목은 [입력 필요: 짧은 이름]으로 남긴다):\n"                + "\n".join(f"- {line}" for line in guide["open"])
             )
         else:
-            parts.append("이번 조항에는 [입력 필요] 칸을 하나도 만들지 않는다. 위 값과 기본 문구로 문장을 끝까지 쓴다.")
-
+            parts.append(
+                "이번 조항에는 [입력 필요] 칸을 만들지 않는다. "
+                "단, 확정 조건에서 '아직 정하지 않음'인 항목만 [입력 필요: 짧은 이름]으로 남긴다. "
+                "그 밖에는 위 값과 기본 문구로 문장을 끝까지 쓴다."
+            )
         return "\n\n".join(parts)
 
 
@@ -1138,6 +1162,10 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
             )
             or ""
         ).strip()
+
+
+        # 화면이 "제N조(제목)"를 붙이므로, 본문 앞의 조 머리말은 규칙으로 지운다.
+        suggested_clause = ARTICLE_HEADING.sub("", suggested_clause, count=1).strip()
 
         warnings = (
             result.get(

@@ -29,6 +29,7 @@ from sai_rag.api.schemas import (
     ClauseChatPrepareRequest,
     ClauseChatRouteRequest,
     ClauseChatWriteRequest,
+    ClauseReviewRequest,
     ContractClauseSuggestionRequest,
     ContractReviewRequest,
 )
@@ -454,6 +455,47 @@ def prepare_contract_clause(
 
 
 @app.post(
+    "/rag/contracts/clause-review"
+)
+def review_contract_clause(
+    request: Request,
+    body: ClauseReviewRequest,
+):
+    """
+    반영한 AI 조항을 다시 검토한다. (생성 없이 ⑤ 검증만)
+    규칙으로 끝나면 LLM을 부르지 않고, 필요할 때만 LLM 검증을 한다.
+    """
+
+    try:
+        return request.app.state.clause_agent.review_clause(
+            contract=to_agent_contract(
+                body.contract.model_dump()
+            ),
+            message=body.message,
+            issues=body.issues,
+            clause=body.clause,
+            references=body.references,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    except Exception as exc:
+        print(
+            "[Clause Review Error]",
+            repr(exc),
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="조항을 다시 검토하는 중 오류가 발생했습니다.",
+        ) from exc
+
+
+@app.post(
     "/rag/contracts/clause-suggestions/stream"
 )
 def suggest_contract_clause_stream(
@@ -495,6 +537,7 @@ def suggest_contract_clause_stream(
 def write_contract_clause_stream(
     request: Request,
     body: ClauseChatWriteRequest,
+
 ):
     """
     대화형 특약 2턴: 확정한 조건으로 특약을 쓴다. (SSE)

@@ -59,6 +59,52 @@ def test_writing_guide_text_has_sections_and_no_slot_rule():
 
     assert "계약 정보에서 그대로 쓸 값" in text
     assert "- 이자는 남은 원금에 대해 계산한다" in text
-    assert "[입력 필요] 칸을 하나도 만들지 않는다" in text
+    assert "이번 조항에는 [입력 필요] 칸을 만들지 않는다" in text
+    assert "'아직 정하지 않음'인 항목만" in text
     assert ClauseGenerator._format_writing_guide(None) == ""
+
+
+def test_article_heading_is_removed_from_clause_body():
+    result = ClauseGenerator._normalize_result(
+        {"suggestedClause": "제○조(형의 연대보증) ① 형은 채무를 연대보증한다.", "title": "연대보증"},
+        message="형이 보증인이 되게 해 주세요",
+    )
+
+    assert result["suggestedClause"] == "① 형은 채무를 연대보증한다."
+
+
+def test_clause_without_heading_is_unchanged():
+    result = ClauseGenerator._normalize_result(
+        {"suggestedClause": "채무자는 매월 20일에 갚는다.", "title": "상환"},
+        message="매월 20일에 갚게 해 주세요",
+    )
+
+    assert result["suggestedClause"] == "채무자는 매월 20일에 갚는다."
+
+
+def test_article_heading_with_dot_colon_or_brackets_is_removed():
+    for heading in ("제1조. (중도상환) ", "제 2 조: ", "제1조 [중도상환] ", "제○조【중도상환】"):
+        result = ClauseGenerator._normalize_result(
+            {"suggestedClause": heading + "채무자는 언제든지 상환할 수 있다.", "title": "중도상환"},
+            message="중도상환",
+        )
+
+        assert result["suggestedClause"] == "채무자는 언제든지 상환할 수 있다."
+
+
+def test_sentence_starting_with_je_is_not_removed():
+    result = ClauseGenerator._normalize_result(
+        {"suggestedClause": "제한 조건 없이 언제든지 상환할 수 있다.", "title": "중도상환"},
+        message="중도상환",
+    )
+
+    assert result["suggestedClause"] == "제한 조건 없이 언제든지 상환할 수 있다."
+
+
+def test_system_prompt_asks_slot_names_to_show_value_kind():
+    prompt = ClauseGenerator._build_system_prompt(None)
+
+    assert '비율: "~율"' in prompt
+    assert '금액: "~금액"' in prompt
+    assert "목록에 있는 이름은 그 이름 그대로 쓴다" in prompt
 

@@ -255,3 +255,68 @@ def test_prepared_references_skip_search_but_empty_list_searches_again():
     )
     assert retriever.calls > 0
 
+
+class RecordingValidator:
+    def __init__(self, suggested_clause=None):
+        self.suggested_clause = suggested_clause
+        self.generated = None
+
+    def validate(self, contract, message, issues, generated, references, **kwargs):
+        self.generated = generated
+        return {
+            "status": "REVIEW",
+            "isSafeToSuggest": True,
+            "checks": [],
+            "warnings": [],
+            "suggestedClause": self.suggested_clause or generated["suggestedClause"],
+            "validatorMode": "DETERMINISTIC",
+        }
+
+
+def test_review_clause_validates_without_generation_and_reports_open_slots():
+    agent, retriever = make_agent()
+    agent.validator = RecordingValidator()
+
+    result = agent.review_clause(
+        contract=CONTRACT,
+        message="중도상환 수수료 없이 해 주세요",
+        issues=[{"type": "EARLY_REPAYMENT"}],
+        clause="채무자는 [입력 필요: 사전 통지 기간] 전에 알리고 중도상환할 수 있다.",
+        references=[dict(LAW)],
+    )
+
+    assert retriever.calls == 0
+    assert result["openSlots"] == ["사전 통지 기간"]
+    assert agent.validator.generated["unresolvedDecisions"][0]["name"] == "사전 통지 기간"
+    assert result["suggestedClause"] is None
+
+
+def test_review_clause_searches_when_no_references_and_returns_revision():
+    agent, retriever = make_agent()
+    agent.validator = RecordingValidator(suggested_clause="채무자는 언제든지 중도상환할 수 있다.")
+
+    result = agent.review_clause(
+        contract=CONTRACT,
+        message="중도상환 수수료 없이 해 주세요",
+        issues=[{"type": "EARLY_REPAYMENT"}],
+        clause="채무자는 중도상환할 수 있다.",
+    )
+
+    assert retriever.calls > 0
+    assert result["openSlots"] == []
+    assert result["suggestedClause"] == "채무자는 언제든지 중도상환할 수 있다."
+
+
+def test_review_clause_rejects_empty_clause():
+    import pytest
+
+    agent, _ = make_agent()
+
+    with pytest.raises(ValueError):
+        agent.review_clause(
+            contract=CONTRACT,
+            message="중도상환 수수료 없이 해 주세요",
+            issues=[{"type": "EARLY_REPAYMENT"}],
+            clause="   ",
+        )
+

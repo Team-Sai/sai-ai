@@ -182,6 +182,38 @@ class ClauseChatPrepareRequest(
     )
 
 
+class ClauseReviewRequest(
+    BaseModel
+):
+    """
+    반영한 AI 조항 다시 검토 요청.
+    사용자가 [입력 필요] 칸을 채우거나 문장을 고친 뒤 보낸다.
+    """
+
+    contract: (
+        ContractClauseContext
+    )
+
+    message: str = Field(
+        min_length=1,
+        max_length=2000,
+    )
+
+    issues: list[dict[str, Any]] = Field(
+        min_length=1,
+    )
+
+    clause: str = Field(
+        min_length=1,
+        max_length=5000,
+    )
+
+    references: list[dict[str, Any]] | None = Field(
+        default=None,
+        max_length=10,
+    )
+
+
 
 class ContractReviewOptions(
     BaseModel

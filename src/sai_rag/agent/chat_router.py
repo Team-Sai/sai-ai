@@ -190,6 +190,23 @@ def route_reply(
 
         return done("ANSWER", f"{option}{ro_particle(option)} 정했어요.")
 
+    # 1-1. 버튼이 없는 질문(이름·금액처럼 직접 적는 질문)은 적은 말을 그대로 그 질문의 답으로 쓴다.
+    #      화면은 남은 질문 중 첫 번째만 보여 주므로 대상은 분명하다.
+    current = pending[0] if pending else None
+
+    if (
+        current is not None
+        and not current.get("options")
+        and not any(phrase in text for phrase in UNKNOWN_PHRASES)
+        and text not in CONFIRM_WORDS
+        and text not in REJECT_WORDS
+    ):
+        answer = message.strip()
+        answers[current["id"]] = answer
+
+        return done("ANSWER", f"{answer}{ro_particle(answer)} 정했어요.")
+
+
     # 2. 값이 함께 있으면 값이 이긴다
     values = _reply_values(message)
 
@@ -214,7 +231,8 @@ def route_reply(
 
     # 3. 모름·나중에 → [입력 필요] 칸으로 남긴다
     if any(phrase in text for phrase in UNKNOWN_PHRASES):
-        if len(pending) != 1:
+        # 화면은 남은 질문 중 첫 번째만 보여 주므로, "나중에"는 그 질문에 대한 답이다.
+        if not pending:
             return done("AMBIGUOUS")
 
         answers[pending[0]["id"]] = UNKNOWN_ANSWER

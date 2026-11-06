@@ -811,6 +811,69 @@ class ContractClauseAgent:
             "debug": {"performance": performance},
         }
 
+    def review_clause(
+        self,
+        contract: dict[str, Any],
+        message: str,
+        issues: list[dict[str, Any]],
+        clause: str,
+        references: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """반영한 조항을 사용자가 채우거나 고친 뒤 다시 검토한다. (생성 없이 ⑤ 검증만)"""
+
+        clause = clause.strip()
+
+        if not clause:
+            raise ValueError("검토할 조항 문장을 입력해 주세요.")
+
+        if not references:
+            references = self.prepare_references(
+                contract=contract,
+                message=message,
+                issues=issues,
+            )
+
+        # 아직 채우지 않은 [입력 필요: 이름] 칸
+        open_slots = [
+            name.strip()
+            for name in re.findall(r"\[입력 필요:\s*([^\]]+)\]", clause)
+        ]
+
+        validation = self.validator.validate(
+            message=message,
+            contract=contract,
+            issues=issues,
+            generated={
+                "suggestedClause": clause,
+                "warnings": [],
+                "unresolvedDecisions": [
+                    {"name": name, "reason": "아직 채우지 않은 칸입니다."}
+                    for name in open_slots
+                ],
+            },
+            references=references,
+        )
+
+        revised = str(validation.get("suggestedClause") or "").strip()
+
+        print(
+            "[PERF][ClauseAgent] "
+            f"review clause_chars={len(clause)} open_slots={len(open_slots)} "
+            f"mode={validation.get('validatorMode')}"
+        )
+
+        return {
+            "status": validation.get("status"),
+            "isSafeToSuggest": validation.get("isSafeToSuggest"),
+            "checks": validation.get("checks") or [],
+            "warnings": validation.get("warnings") or [],
+            "openSlots": open_slots,
+            # 검증기가 문장을 고쳤을 때만 제안으로 준다. (반영은 사용자가 고른다)
+            "suggestedClause": revised if revised and revised != clause else None,
+            "validatorMode": validation.get("validatorMode"),
+        }
+
+
     def prepare_references(
         self,
         contract: dict[str, Any],

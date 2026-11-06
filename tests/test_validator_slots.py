@@ -140,3 +140,10 @@ def test_chat_conditions_go_into_llm_prompt_and_replace_candidates(validator):
     assert "연체이자는 연체된 금액에 대해 계산한다" in prompt
     assert "[해당 쟁점의 결정사항 후보]\n[]" in prompt
 
+
+def test_vague_rate_phrase_is_warned_by_rule(validator):
+    result = run(validator, clause=CLAUSE + " 위약금은 연체된 금액에 일정 비율을 적용하여 산정한다.", slots=[SLOT])
+
+    assert validator.client.responses.calls == []
+    ambiguity = next(check for check in result["checks"] if check["type"] == "AMBIGUITY")
+    assert ambiguity["status"] == "WARNING"

@@ -165,6 +165,16 @@ def test_unknown_answer_is_recorded():
     assert result["answers"] == {"partial_payment": UNKNOWN_ANSWER}
 
 
+def test_unknown_answers_the_first_pending_question_when_several_remain():
+    other = {**PARTIAL_QUESTION, "id": "other_question"}
+
+    result = run("나중에 정할게요", questions=[PARTIAL_QUESTION, other])
+
+    assert result["kind"] == "UNKNOWN"
+    assert result["answers"] == {"partial_payment": UNKNOWN_ANSWER}
+    assert [q["id"] for q in result["pendingQuestions"]] == ["other_question"]
+
+
 def test_from_question_yes_uses_contract_value():
     result = run("맞아요", slots=[RATE_SLOT], questions=[FROM_QUESTION])
 
@@ -177,3 +187,31 @@ def test_from_question_no_is_reject():
 
     assert result["kind"] == "REJECT"
     assert result["slots"][0]["from"] == "6%"
+
+
+def test_free_text_answers_question_without_options():
+    free = {"id": "guarantor", "text": "보증인은 누구인가요?", "options": []}
+
+    result = run("제 형이요", questions=[free])
+
+    assert result["kind"] == "ANSWER"
+    assert result["answers"] == {"guarantor": "제 형이요"}
+    assert result["pendingQuestions"] == []
+
+
+def test_money_for_question_without_options_is_its_answer():
+    limit = {"id": "limit_amount", "text": "보증 최고액은 얼마인가요?", "options": []}
+
+    result = run("500만 원", questions=[limit])
+
+    assert result["kind"] == "ANSWER"
+    assert result["answers"] == {"limit_amount": "500만 원"}
+
+
+def test_later_still_works_for_question_without_options():
+    free = {"id": "guarantor", "text": "보증인은 누구인가요?", "options": []}
+
+    result = run("나중에 정할게요", questions=[free])
+
+    assert result["kind"] == "UNKNOWN"
+
