@@ -59,7 +59,8 @@ def test_writing_guide_text_has_sections_and_no_slot_rule():
 
     assert "계약 정보에서 그대로 쓸 값" in text
     assert "- 이자는 남은 원금에 대해 계산한다" in text
-    assert "[입력 필요] 칸을 하나도 만들지 않는다" in text
+    assert "이번 조항에는 [입력 필요] 칸을 만들지 않는다" in text
+    assert "'아직 정하지 않음'인 항목만" in text
     assert ClauseGenerator._format_writing_guide(None) == ""
 
 

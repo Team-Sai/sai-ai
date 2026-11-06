@@ -517,6 +517,9 @@ class ClauseGenerator:
 - 추후 합의한다
 - 당사자가 정한다
 - 당사자가 합의한다
+- 일정 비율
+- 일정 금액
+- 일정 기간
 
 단, 사용자가 해당 표현 자체를 명시적으로 요청한 경우는 제외한다.
 
@@ -629,8 +632,8 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
         today = today_kst().isoformat()
 
         confirmed_section = (
-            "\n사용자가 확정한 조건 (반드시 그대로 반영하고 [입력 필요]로 남기지 않는다):\n"
-            f"{confirmed_text}\n"
+            "\n사용자가 확정한 조건 (대화에서 정하거나 바꾼 값이다. 요청 원문과 값이 다르면 반드시 이 값을 따른다. "
+            "'아직 정하지 않음'인 항목만 [입력 필요: 짧은 이름]으로 남기고, 나머지는 [입력 필요]로 남기지 않는다):\n"            f"{confirmed_text}\n"
             if confirmed_text
             else ""
         )
@@ -703,12 +706,15 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
 
         if guide["open"]:
             parts.append(
-                "아직 정하지 않은 것 ([입력 필요: 이름]은 이 목록의 이름 그대로만 쓰고, 목록에 없는 것은 [입력 필요]로 만들지 않는다):\n"
-                + "\n".join(f"- {line}" for line in guide["open"])
+                "아직 정하지 않은 것 ([입력 필요: 이름]은 이 목록의 이름 그대로 쓰고, 목록에 없는 것은 [입력 필요]로 만들지 않는다. "
+                "단, 확정 조건에서 '아직 정하지 않음'인 항목은 [입력 필요: 짧은 이름]으로 남긴다):\n"                + "\n".join(f"- {line}" for line in guide["open"])
             )
         else:
-            parts.append("이번 조항에는 [입력 필요] 칸을 하나도 만들지 않는다. 위 값과 기본 문구로 문장을 끝까지 쓴다.")
-
+            parts.append(
+                "이번 조항에는 [입력 필요] 칸을 만들지 않는다. "
+                "단, 확정 조건에서 '아직 정하지 않음'인 항목만 [입력 필요: 짧은 이름]으로 남긴다. "
+                "그 밖에는 위 값과 기본 문구로 문장을 끝까지 쓴다."
+            )
         return "\n\n".join(parts)
 
 

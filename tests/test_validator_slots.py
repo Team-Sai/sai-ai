@@ -140,3 +140,9 @@ def test_chat_conditions_go_into_llm_prompt_and_replace_candidates(validator):
     assert "연체이자는 연체된 금액에 대해 계산한다" in prompt
     assert "[해당 쟁점의 결정사항 후보]\n[]" in prompt
 
+
+def test_vague_rate_phrase_goes_to_llm(validator):
+    run(validator, clause=CLAUSE + " 위약금은 연체된 금액에 일정 비율을 적용하여 산정한다.", slots=[SLOT])
+
+    assert len(validator.client.responses.calls) == 1
+
