@@ -72,9 +72,11 @@ class FakeAgent:
         self.error = error
         self.delay = delay
         self.received = None
+        self.options = None
 
-    def suggest_clause(self, *, contract, message, on_event=None, should_stop=None):
+    def suggest_clause(self, *, contract, message, on_event=None, should_stop=None, **options):
         self.received = (contract, message)
+        self.options = options
         on_event = on_event or (lambda event, data: None)
         on_event("progress", {"step": "analysis"})
         if self.error:
@@ -138,6 +140,24 @@ def test_final_does_not_include_debug():
     final = events[-1][1]
     assert "debug" not in final
     assert final["suggestedClause"] == DRAFT
+
+def test_final_keeps_only_validator_mode_and_llm_reasons_from_debug():
+    class ModeAgent(FakeAgent):
+        def suggest_clause(self, **kwargs):
+            result = super().suggest_clause(**kwargs)
+            result["debug"] = {
+                "validatorMode": "LLM",
+                "searchPlans": ["내부 검색 질의"],
+                "validatorDebug": {"llmReasons": ["slot_not_reflected"], "slots": ["내부"]},
+            }
+            return result
+
+    final = run_stream(ModeAgent())[0][-1][1]
+
+    assert final["validatorMode"] == "LLM"
+    assert final["llmReasons"] == ["slot_not_reflected"]
+    assert "debug" not in final
+    assert "searchPlans" not in final
 
 
 def test_value_error_becomes_400_error_event():
@@ -249,6 +269,30 @@ def test_existing_endpoint_still_returns_json():
     assert response.status_code == 200
     assert response.json()["suggestedClause"] == DRAFT
 
+def test_write_stream_endpoint_passes_confirmed_values():
+    from sai_rag.api import main
+
+    agent = FakeAgent(final_clause=FINAL)
+    main.app.state.clause_agent = agent
+    client = TestClient(main.app)
+
+    response = client.post(
+        "/rag/contracts/clause-chat/write/stream",
+        json={
+            "contract": CONTRACT,
+            "message": "중도상환 수수료 없이",
+            "issues": [{"type": "EARLY_REPAYMENT", "reason": "중도상환", "searchTerms": ["중도상환"]}],
+            "slots": [],
+            "questions": [],
+            "answers": {},
+        },
+    )
+
+    assert response.status_code == 200
+    events, _ = parse_sse([response.text])
+    assert events[-1][0] == "final"
+    assert agent.options["issues"][0]["type"] == "EARLY_REPAYMENT"
+
 
 # ---------------------------------------------------------------
 # API 경로 회귀 테스트: 백엔드(RagApiClient)가 부르는 경로가
@@ -270,6 +314,11 @@ def test_backend_routes_exist():
         "/rag/contracts/review",
         "/rag/contracts/clause-suggestions",
         "/rag/contracts/clause-suggestions/stream",
+        "/rag/contracts/clause-chat/understand",
+        "/rag/contracts/clause-chat/route",
+        "/rag/contracts/clause-chat/prepare",
+        "/rag/contracts/clause-chat/write/stream",
+        "/rag/contracts/clause-review",
     } <= set(_post_paths())
 
 
@@ -409,7 +458,8 @@ def test_generator_streams_clause_text_while_writing_json():
 
     assert calls[0]["stream"] is True
     assert "".join(received) == "제1조 채무자는\n언제든지 \"상환\"할 수 있다."
-    assert result["suggestedClause"].startswith("제1조 채무자는")
+    # 실시간 글자(on_delta)는 받은 그대로 보여 주고, 최종 조항에서는 조 머리말을 지운다. (#28)
+    assert result["suggestedClause"].startswith("채무자는")
     assert fake_stream.closed
 
 
@@ -519,3 +569,45 @@ def test_references_event_is_relayed_before_generation():
         {"references": [{"lawName": "민법", "articleNumber": "제468조"}]}
     ]
     assert names.index("references") < names.index("delta")
+
+
+def test_write_stream_endpoint_passes_prepared_references():
+    from sai_rag.api import main
+
+    agent = FakeAgent(final_clause=FINAL)
+    main.app.state.clause_agent = agent
+
+    response = TestClient(main.app).post(
+        "/rag/contracts/clause-chat/write/stream",
+        json={
+            "contract": CONTRACT,
+            "message": "중도상환 수수료 없이",
+            "issues": [{"type": "EARLY_REPAYMENT"}],
+            "references": [{"document_id": "민법-468"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert agent.options["references"] == [{"document_id": "민법-468"}]
+
+
+def test_prepare_endpoint_returns_references():
+    from sai_rag.api import main
+
+    class PrepareAgent(FakeAgent):
+        def prepare_references(self, *, contract, message, issues, demo=False):
+            self.received = (message, issues)
+            return [{"document_id": "민법-398"}]
+
+    agent = PrepareAgent()
+    main.app.state.clause_agent = agent
+
+    response = TestClient(main.app).post(
+        "/rag/contracts/clause-chat/prepare",
+        json={"contract": CONTRACT, "message": "위약금", "issues": [{"type": "PENALTY"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"references": [{"document_id": "민법-398"}]}
+    assert agent.received == ("위약금", [{"type": "PENALTY"}])
+

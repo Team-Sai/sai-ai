@@ -8,8 +8,15 @@ from typing import Any, Callable
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from sai_rag.agent.chat_router import (
+    UNKNOWN_ANSWER,
+)
 from sai_rag.agent.clause_generator import (
     ClauseGenerationCancelled,
+    ClauseGenerator,
+)
+from sai_rag.agent.decision_rules import (
+    writing_guide,
 )
 from sai_rag.agent.openai_options import (
     openai_call_options,
@@ -26,6 +33,10 @@ from sai_rag.agent.intent_value_normalizer import (
 
 from sai_rag.agent.contract_domain_validator import (
     ContractDomainValidator,
+)
+from sai_rag.agent.slot_rules import (
+    check_slots_against_clause,
+    tagged_values,
 )
 
 
@@ -109,6 +120,26 @@ class ClauseValidator:
         (
             "필요한 경우",
             "조건 발생 기준이 모호할 수 있습니다.",
+        ),
+        (
+            "일정 비율",
+            "비율이 구체적으로 확정되지 않았습니다.",
+        ),
+        (
+            "일정 금액",
+            "금액이 구체적으로 확정되지 않았습니다.",
+        ),
+        (
+            "일정 기간",
+            "기간이 구체적으로 확정되지 않았습니다.",
+        ),
+        (
+            "]에 따라",
+            "입력 칸에 기준을 미루고 있어, 값을 넣으면 문장이 어색해집니다.",
+        ),
+        (
+            "]에 따른다",
+            "입력 칸에 기준을 미루고 있어, 값을 넣으면 문장이 어색해집니다.",
         ),
     )
 
@@ -286,6 +317,8 @@ class ClauseValidator:
         generated: dict[str, Any],
         references: list[dict[str, Any]],
         should_stop: Callable[[], bool] | None = None,
+        slots: list[dict[str, Any]] | None = None,
+        confirmed: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Generator 결과를 검증한다.
@@ -331,6 +364,19 @@ class ClauseValidator:
             ).upper()
             for issue in issues
         ]
+
+        # 대화형 특약: 확정됐거나 원문에 있는 값 칸으로 규칙 검증을 돕는다.
+        # 값 칸이 없으면(기존 API) 지금과 똑같이 동작한다.
+        slot_check = (
+            check_slots_against_clause(
+                slots=slots,
+                message=message,
+                clause=original_clause,
+            )
+            if slots
+            else None
+        )
+
 
         # ======================================
         # 1. 계약 기본 데이터 검증
@@ -388,6 +434,11 @@ class ClauseValidator:
         contract_clause_conflicts = (
             self._find_contract_clause_conflicts(
                 contract=contract,
+                skip_fields=(
+                    slot_check["skipFields"]
+                    if slot_check
+                    else frozenset()
+                ),
                 clause=original_clause,
             )
         )
@@ -397,6 +448,11 @@ class ClauseValidator:
                 message=message,
                 clause=original_clause,
                 contract=contract,
+                old_values=(
+                    slot_check["oldValues"]
+                    if slot_check
+                    else frozenset()
+                ),
             )
         )
 
@@ -408,6 +464,30 @@ class ClauseValidator:
                 ),
             )
         )
+
+        # 값 칸이 원문을 다 설명하고, 조항에 값·조건·표시어가 모두 있으면
+        # 자유 조건이라도 규칙으로 확인한 것으로 본다.
+        if (
+            semantic_intent_review
+            and slot_check is not None
+            and slot_check["explainsMessage"]
+            and not slot_check["notReflected"]
+            and self._markers_reflected(
+                message=message,
+                clause=original_clause,
+            )
+        ):
+            semantic_intent_review = False
+
+        if slot_check is not None:
+            print(
+                "[ClauseValidator] "
+                f"slots usable={slot_check['usableCount']} "
+                f"not_reflected={len(slot_check['notReflected'])} "
+                f"explains_message={slot_check['explainsMessage']} "
+                f"skip_fields={sorted(slot_check['skipFields'])}"
+            )
+
 
         print(
             "[ClauseValidator] "
@@ -704,6 +784,11 @@ class ClauseValidator:
                 semantic_intent_review=(
                     semantic_intent_review
                 ),
+
+                slot_not_reflected=bool(
+                    slot_check
+                    and slot_check["notReflected"]
+                ),
             )
         )
 
@@ -828,10 +913,32 @@ class ClauseValidator:
             f"reasons={','.join(llm_reasons)}"
         )
 
-        decision_candidates = (
-            self._collect_decision_candidates(
-                issue_types
+        # 대화형: 생성기와 같은 메모(확정 조건·작성 안내)를 주고, 후보는 아직 정하지 않은 것만 준다.
+        guide = (
+            writing_guide(
+                issue_types=issue_types,
+                message=message,
+                questions=confirmed.get("questions") or [],
+                answers=confirmed.get("answers") or {},
+                unknown_answer=UNKNOWN_ANSWER,
             )
+            if confirmed is not None
+            else None
+        )
+
+        decision_candidates = (
+            guide["open"]
+            if guide is not None
+            else self._collect_decision_candidates(issue_types)
+        )
+
+        chat_text = "\n\n".join(
+            text
+            for text in (
+                ClauseGenerator._format_confirmed(confirmed),
+                ClauseGenerator._format_writing_guide(guide),
+            )
+            if text
         )
 
         system_prompt = (
@@ -871,6 +978,9 @@ class ClauseValidator:
                 ),
                 semantic_intent_review=(
                     semantic_intent_review
+                ),
+                chat_text=(
+                    chat_text
                 ),
             )
         )
@@ -944,6 +1054,7 @@ class ClauseValidator:
         contract_clause_conflicts: list[str],
         user_intent_conflicts: list[str],
         semantic_intent_review: bool,
+        slot_not_reflected: bool = False,
     ) -> list[str]:
         reasons: list[str] = []
 
@@ -993,6 +1104,12 @@ class ClauseValidator:
             reasons.append(
                 "free_text_intent_requires_semantic_review"
             )
+
+        if slot_not_reflected:
+            reasons.append(
+                "slot_not_reflected"
+            )
+
 
         return reasons
 
@@ -1134,6 +1251,7 @@ class ClauseValidator:
         *,
         contract: dict[str, Any],
         clause: str,
+        skip_fields: set[str] | frozenset = frozenset(),
     ) -> list[str]:
         """
         생성 조항 안에서 '현재 계약의 확정값'이라고 해석할 수 있는
@@ -1156,7 +1274,7 @@ class ClauseValidator:
             )
         )
 
-        if principal is not None:
+        if principal is not None and "principalAmount" not in skip_fields:
             principal_pattern = re.compile(
                 r"(?:대여\s*원금|대여금|차용금|원금)"
                 r"[^0-9]{0,18}"
@@ -1208,7 +1326,7 @@ class ClauseValidator:
             else None
         )
 
-        if normalized_maturity:
+        if normalized_maturity and "maturityDate" not in skip_fields:
             maturity_pattern = re.compile(
                 r"(?:최종\s*)?"
                 r"(?:만기일|변제기일|변제기)"
@@ -1252,7 +1370,7 @@ class ClauseValidator:
             )
         )
 
-        if interest_rate is not None:
+        if interest_rate is not None and "interestRate" not in skip_fields:
             interest_pattern = re.compile(
                 r"(?<!연체)"
                 r"(?:약정\s*이율|약정\s*이자율|이자율)"
@@ -1305,7 +1423,7 @@ class ClauseValidator:
         ):
             normalized_repayment_day = None
 
-        if normalized_repayment_day is not None:
+        if normalized_repayment_day is not None and "repaymentDay" not in skip_fields:
             repayment_day_pattern = re.compile(
                 r"(?:정기\s*)?"
                 r"(?:상환일|변제일)"
@@ -1359,7 +1477,7 @@ class ClauseValidator:
             ),
         }
 
-        if repayment_type:
+        if repayment_type and "repaymentType" not in skip_fields:
             mentioned_types = [
                 (
                     code,
@@ -1601,6 +1719,7 @@ class ClauseValidator:
         message: str,
         clause: str,
         contract: dict[str, Any] | None = None,
+        old_values: set[tuple[str, Any]] | frozenset = frozenset(),
     ) -> list[str]:
         conflicts: list[str] = []
 
@@ -1609,6 +1728,13 @@ class ClauseValidator:
                 message
             )
         ):
+
+        # "5%에서 7%로"의 5%처럼 사용자가 말한 원래 값은 조항에 없는 게 맞다.
+            token_values = tagged_values(token)
+
+            if token_values and token_values <= old_values:
+                continue
+
             if self._contains_normalized_token(
                 clause,
                 token,
@@ -1725,6 +1851,21 @@ class ClauseValidator:
             for marker
             in self.SEMANTIC_INTENT_MARKERS
         )
+
+    def _markers_reflected(
+        self,
+        *,
+        message: str,
+        clause: str,
+    ) -> bool:
+        """원문의 제한·예외 표시어("연속", "일부만" 등)가 조항에도 그대로 있는지."""
+
+        return all(
+            marker in clause
+            for marker in self.SEMANTIC_INTENT_MARKERS
+            if marker in message
+        )
+
 
     def _find_unresolved_ambiguous_phrases(
         self,
@@ -2186,6 +2327,10 @@ Generator가 만든 조항을 그대로 믿지 말고 다음을 검증한다.
 
 한 Slot에는 하나의 결정값만 넣는다.
 
+조건명은 값의 종류가 드러나게 짓는다. (비율 "~율", 금액 "~금액", 날짜 "~날짜", 일수 "~일수", 개월 "~개월", 횟수 "~횟수")
+
+[입력 필요] 칸은 값이 들어갈 자리에만 둔다. "[입력 필요: …]에 따라/따른다", "여부는 [입력 필요: …]"처럼 기준·여부를 칸으로 미루는 문장은 값 칸으로 고치거나 빼고 warnings로 알린다.
+
 
 [법령]
 
@@ -2254,7 +2399,14 @@ warnings에 남긴다.
         contract_clause_conflicts: list[str],
         user_intent_conflicts: list[str],
         semantic_intent_review: bool,
+        chat_text: str = "",
     ) -> str:
+        chat_section = (
+            "[대화에서 이미 정한 조건 — 이 내용은 [입력 필요]로 바꾸지 않는다]\n"
+            f"{chat_text}\n"
+            if chat_text
+            else ""
+        )
         reference_summaries = [
             self._reference_summary(
                 reference
@@ -2299,6 +2451,8 @@ warnings에 남긴다.
 
 [Generator가 미결정이라고 표시했지만 Slot이 없는 조건]
 {json.dumps(missing_slots, ensure_ascii=False, indent=2)}
+
+{chat_section}
 
 [해당 쟁점의 결정사항 후보]
 {json.dumps(decision_candidates, ensure_ascii=False, indent=2)}

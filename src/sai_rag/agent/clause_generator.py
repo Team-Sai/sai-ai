@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from time import perf_counter
 from typing import Any
 
@@ -16,9 +17,20 @@ from sai_rag.agent.intent_value_normalizer import (
     today_kst,
 )
 
+from sai_rag.agent.chat_router import (
+    UNKNOWN_ANSWER,
+)
+
+from sai_rag.agent.decision_rules import (
+    writing_guide,
+)
+
 from sai_rag.agent.openai_options import (
     openai_call_options,
 )
+
+# 본문 맨 앞의 "제○조(제목)", "제7조 (제목)" 같은 조 머리말. 화면이 따로 붙이므로 지운다.
+ARTICLE_HEADING = re.compile(r"^\s*제\s*[○◯0-9]+\s*조\s*[.:]?\s*([(\[【][^)\]】]*[)\]】])?\s*")
 
 
 load_dotenv()
@@ -223,6 +235,7 @@ class ClauseGenerator:
         references: list[dict[str, Any]],
         on_delta: Callable[[str], None] | None = None,
         should_stop: Callable[[], bool] | None = None,
+        confirmed: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         on_delta를 넘기면 모델 응답을 스트리밍으로 받아
@@ -245,6 +258,23 @@ class ClauseGenerator:
                 issue_types
             )
         )
+
+        # 대화형: 표대로 계약값·기본값으로 정해진 것은 후보에서 빼고, 아직 정하지 않은 것만 후보로 둔다.
+        guide = (
+            writing_guide(
+                issue_types=issue_types,
+                message=message,
+                questions=confirmed.get("questions") or [],
+                answers=confirmed.get("answers") or {},
+                unknown_answer=UNKNOWN_ANSWER,
+            )
+            if confirmed is not None
+            else None
+        )
+
+        if guide is not None:
+            decision_candidates = guide["open"]
+
 
         compact_contract = (
             self._compact_contract(
@@ -282,6 +312,16 @@ class ClauseGenerator:
                 ),
                 decision_candidates=(
                     decision_candidates
+                ),
+                confirmed_text=(
+                    self._format_confirmed(
+                        confirmed
+                    )
+                ),
+                writing_text=(
+                    self._format_writing_guide(
+                        guide
+                    )
                 ),
             )
         )
@@ -477,10 +517,30 @@ class ClauseGenerator:
 - 추후 합의한다
 - 당사자가 정한다
 - 당사자가 합의한다
+- 일정 비율
+- 일정 금액
+- 일정 기간
 
 단, 사용자가 해당 표현 자체를 명시적으로 요청한 경우는 제외한다.
 
 4. 한 Slot에는 하나의 결정값만 넣는다.
+조건명은 값의 종류가 드러나게 짓는다.
+- 비율: "~율" (예: 중도상환 수수료율, 위약금률)
+- 금액: "~금액" (예: 위약금 금액)
+- 날짜: "~날짜" (예: 담보 제공 날짜)
+- 일수: "~일수" (예: 통지 일수)
+- 개월: "~개월" (예: 유예 개월)
+- 횟수: "~횟수" (예: 연체 횟수)
+- 통지 방법: "~통지 방법"
+그 밖의 선택·설명은 짧은 이름으로 짓는다.
+단, '아직 정하지 않은 것' 목록에 있는 이름은 그 이름 그대로 쓴다.
+
+[입력 필요] 칸은 값(금액·비율·날짜·일수·개월·횟수·방법)이 들어갈 자리에만 둔다.
+칸에 값을 넣었을 때 문장이 자연스럽게 읽히게 쓴다. (예: "위약금은 [입력 필요: 위약금 금액]으로 한다.")
+"[입력 필요: …]에 따라", "[입력 필요: …]에 따른다", "여부는 [입력 필요: …]", "관계는 [입력 필요: …]"처럼
+기준·여부·관계를 칸으로 미루지 않는다.
+예/아니오나 방식처럼 값이 아닌 결정이 정해지지 않았으면 그 문장을 넣지 않고
+warnings에 "○○는 아직 정하지 않았어요."로 알린다. (확정 조건의 '아직 정하지 않음'에도 이 규칙이 우선한다)
 
 5. 검색된 법령 근거에 없는 법률·조문·판례를 만들지 않는다.
 
@@ -500,6 +560,10 @@ class ClauseGenerator:
 "1년 뒤"처럼 기간으로 요청된 날짜는 실제 날짜로 계산해 쓴다.
 기준일은 사용자가 말한 날짜(예: "지급일로부터"), "오늘로부터"면 오늘 날짜,
 기준이 없으면 계약 시작일(startDate)로 한다.
+
+11. suggestedClause에는 "제○조(제목)", "제7조(…)" 같은 조 번호·제목 머리말을 쓰지 않는다.
+조 번호와 제목은 계약서 화면이 붙인다. 제목은 title에만 쓴다.
+
 
 반드시 JSON 객체 하나만 출력한다.
 키는 아래 순서 그대로 출력한다. (suggestedClause를 가장 먼저 쓴다)
@@ -535,6 +599,8 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
             dict[str, str]
         ],
         decision_candidates: list[str],
+        confirmed_text: str = "",
+        writing_text: str = "",
     ) -> str:
         contract_json = (
             json.dumps(
@@ -582,11 +648,28 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
 
         today = today_kst().isoformat()
 
+        confirmed_section = (
+            "\n사용자가 확정한 조건 (대화에서 정하거나 바꾼 값이다. 요청 원문과 값이 다르면 반드시 이 값을 따른다. "
+            "'아직 정하지 않음'인 항목만 [입력 필요: 짧은 이름]으로 남기고, 나머지는 [입력 필요]로 남기지 않는다):\n"            f"{confirmed_text}\n"
+            if confirmed_text
+            else ""
+        )
+
+        writing_section = (
+            f"\n{writing_text}\n"
+            if writing_text
+            else ""
+        )
+
         return f"""
 오늘 날짜(한국 시간): {today}
 
 사용자 요청:
 {message}
+
+{confirmed_section}
+
+{writing_section}
 
 계약정보:
 {contract_json}
@@ -601,13 +684,110 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
 {references_json}
 
 작성 순서:
-1. 사용자 요청에 이미 정해진 조건인지 확인한다.
+1. 사용자 요청과 사용자가 확정한 조건에 이미 정해진 조건인지 확인한다.
 2. 계약정보에 이미 정해진 조건인지 확인한다.
 3. 조항 이행에 꼭 필요한데 미정이면 [입력 필요: ...]로 남긴다.
 4. 불필요한 조건은 추가하지 않는다.
 
 위 정보만 사용해 조항을 작성한다.
 """.strip()
+
+    @staticmethod
+    def _format_writing_guide(
+        guide: dict[str, list[str]] | None,
+    ) -> str:
+        """대화형 작성: 계약값·기본 문구·아직 정하지 않은 것을 생성 프롬프트용 글로."""
+
+        if guide is None:
+            return ""
+
+        parts: list[str] = []
+
+        if guide["contract"]:
+            parts.append(
+                "계약 정보에서 그대로 쓸 값 (다른 값을 지어내지 않는다):\n"
+                + "\n".join(f"- {line}" for line in guide["contract"])
+            )
+
+        if guide.get("request"):
+            parts.append(
+                "사용자 요청과 확정 조건에서 가져와 쓸 것 (이름이 달라도 같은 뜻이면 그 값을 쓰고 [입력 필요]로 남기지 않는다):\n"
+                + "\n".join(f"- {line}" for line in guide["request"])
+            )
+
+        if guide["defaults"]:
+            parts.append(
+                "기본 문구 (사용자가 따로 정하지 않았으므로 이대로 쓰고 [입력 필요]로 남기지 않는다):\n"
+                + "\n".join(f"- {line}" for line in guide["defaults"])
+            )
+
+        if guide["open"]:
+            parts.append(
+                "아직 정하지 않은 것 ([입력 필요: 이름]은 이 목록의 이름 그대로 쓰고, 목록에 없는 것은 [입력 필요]로 만들지 않는다. "
+                "단, 확정 조건에서 '아직 정하지 않음'인 항목은 [입력 필요: 짧은 이름]으로 남긴다):\n"                + "\n".join(f"- {line}" for line in guide["open"])
+            )
+        else:
+            parts.append(
+                "이번 조항에는 [입력 필요] 칸을 만들지 않는다. "
+                "단, 확정 조건에서 '아직 정하지 않음'인 항목만 [입력 필요: 짧은 이름]으로 남긴다. "
+                "그 밖에는 위 값과 기본 문구로 문장을 끝까지 쓴다."
+            )
+        return "\n\n".join(parts)
+
+
+    @staticmethod
+    def _format_confirmed(
+        confirmed: dict[str, Any] | None,
+    ) -> str:
+        """
+        대화형 특약에서 사용자가 확정한 조건을 생성 프롬프트용 글로 만든다.
+        확정한 것이 없으면 빈 글자.
+        """
+
+        if not confirmed:
+            return ""
+
+        lines: list[str] = []
+
+        for slot in confirmed.get("slots") or []:
+            if not isinstance(slot, dict):
+                continue
+
+
+            if not slot.get("confirmed"):
+                continue
+
+            line = f"- {slot['name']}: {slot['value']}"
+
+            if slot.get("condition"):
+                line += f" (조건: {slot['condition']})"
+
+            if slot.get("from"):
+                line += f" (원래 값: {slot['from']})"
+
+            lines.append(line)
+
+        answers = confirmed.get("answers") or {}
+
+        for question in confirmed.get("questions") or []:
+            if not isinstance(question, dict):
+                continue
+
+            answer = answers.get(question.get("id"))
+
+            if answer is None:
+                continue
+
+            if answer == UNKNOWN_ANSWER:
+                lines.append(
+                    f"- {question['text']} → 아직 정하지 않음. "
+                    "조항에 [입력 필요: …] 칸으로 남긴다."
+                )
+            else:
+                lines.append(f"- {question['text']} → {answer}")
+
+        return "\n".join(lines)
+
 
     # ==========================================
     # Compact Input
@@ -989,6 +1169,10 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
             )
             or ""
         ).strip()
+
+
+        # 화면이 "제N조(제목)"를 붙이므로, 본문 앞의 조 머리말은 규칙으로 지운다.
+        suggested_clause = ARTICLE_HEADING.sub("", suggested_clause, count=1).strip()
 
         warnings = (
             result.get(

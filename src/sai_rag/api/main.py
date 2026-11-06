@@ -17,11 +17,19 @@ from sai_rag.agent.clause_generator import (
     ClauseGenerator,
 )
 
+from sai_rag.agent.chat_router import (
+    route_reply,
+)
+
 from sai_rag.agent.contract_clause_agent import (
     ContractClauseAgent,
 )
 
 from sai_rag.api.schemas import (
+    ClauseChatPrepareRequest,
+    ClauseChatRouteRequest,
+    ClauseChatWriteRequest,
+    ClauseReviewRequest,
     ContractClauseSuggestionRequest,
     ContractReviewRequest,
 )
@@ -318,6 +326,178 @@ def suggest_contract_clause(
 
 
 @app.post(
+    "/rag/contracts/clause-chat/understand"
+)
+def understand_contract_clause(
+    request: Request,
+    body: ContractClauseSuggestionRequest,
+):
+    """
+    대화형 특약 1턴: 쓰기 전에 이해한 내용과 정해야 할 것을 돌려준다.
+    쟁점 분석(LLM 1번)만 하고 검색·생성은 하지 않는다.
+    """
+
+    try:
+        clause_agent = (
+            request.app.state
+            .clause_agent
+        )
+
+        contract = to_agent_contract(
+            body.contract.model_dump()
+        )
+
+        return clause_agent.understand(
+            contract=contract,
+            message=body.message,
+            demo=body.demo,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    except Exception as exc:
+        print(
+            "[Clause Understand Error]",
+            repr(exc),
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "요청 내용을 확인하는 중 "
+                "오류가 발생했습니다."
+            ),
+        ) from exc
+
+
+@app.post(
+    "/rag/contracts/clause-chat/route"
+)
+def route_contract_clause_reply(
+    body: ClauseChatRouteRequest,
+):
+    """
+    대화형 특약: 사용자 답장을 규칙으로 분류한다. (LLM 0번)
+
+    확정 / 거절 / 값 바꾸기 / 질문 답 / 모름 / 애매 중 하나와
+    고친 값 칸·답 목록을 돌려준다. 애매하면 아무것도 바꾸지 않는다.
+    """
+
+    try:
+        result = route_reply(
+            message=body.message,
+            contract=to_agent_contract(
+                body.contract.model_dump()
+            ),
+            slots=body.slots,
+            questions=body.questions,
+            answers=body.answers,
+        )
+
+    except (KeyError, TypeError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "대화 상태 형식이 "
+                "올바르지 않습니다."
+            ),
+        ) from exc
+
+    print(
+        "[CHAT] "
+        f"kind={result['kind']} "
+        f"route={'UNDECIDED' if result['kind'] == 'AMBIGUOUS' else 'RULE'} "
+        f"message_chars={len(body.message.strip())} "
+        f"pending={len(result['pendingQuestions'])}"
+    )
+
+    return result
+
+
+@app.post(
+    "/rag/contracts/clause-chat/prepare"
+)
+def prepare_contract_clause(
+    request: Request,
+    body: ClauseChatPrepareRequest,
+):
+    """
+    대화형 특약: 사용자가 답하는 동안 ② 검색 + ③ 순위를 미리 한다.
+    백엔드가 결과를 보관했다가 /write/stream에 references로 같이 보낸다.
+    """
+
+    try:
+        references = request.app.state.clause_agent.prepare_references(
+            contract=to_agent_contract(
+                body.contract.model_dump()
+            ),
+            message=body.message,
+            issues=body.issues,
+            demo=body.demo,
+        )
+
+    except Exception as exc:
+        print(
+            "[Clause Prepare Error]",
+            repr(exc),
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="근거 법령을 미리 찾는 중 오류가 발생했습니다.",
+        ) from exc
+
+    print(f"[CHAT] prepare references={len(references)}")
+
+    return {"references": references}
+
+
+@app.post(
+    "/rag/contracts/clause-review"
+)
+def review_contract_clause(
+    request: Request,
+    body: ClauseReviewRequest,
+):
+    """
+    반영한 AI 조항을 다시 검토한다. (생성 없이 ⑤ 검증만)
+    규칙으로 끝나면 LLM을 부르지 않고, 필요할 때만 LLM 검증을 한다.
+    """
+
+    try:
+        return request.app.state.clause_agent.review_clause(
+            contract=to_agent_contract(
+                body.contract.model_dump()
+            ),
+            message=body.message,
+            issues=body.issues,
+            clause=body.clause,
+            references=body.references,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    except Exception as exc:
+        print(
+            "[Clause Review Error]",
+            repr(exc),
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="조항을 다시 검토하는 중 오류가 발생했습니다.",
+        ) from exc
+
+
+@app.post(
     "/rag/contracts/clause-suggestions/stream"
 )
 def suggest_contract_clause_stream(
@@ -353,77 +533,49 @@ def suggest_contract_clause_stream(
         },
     )
 
-    try:
-        clause_agent = (
-            request.app.state
-            .clause_agent
-        )
+@app.post(
+    "/rag/contracts/clause-chat/write/stream"
+)
+def write_contract_clause_stream(
+    request: Request,
+    body: ClauseChatWriteRequest,
 
-        contract = (
-            body.contract.model_dump()
-        )
+):
+    """
+    대화형 특약 2턴: 확정한 조건으로 특약을 쓴다. (SSE)
 
-        # API 요청 모델은 기존 호환성을 위해
-        # principal / repaymentDate를 유지한다.
-        #
-        # Agent/Generator에서는 의미가 더 명확한
-        # principalAmount / maturityDate도 함께 사용하도록
-        # canonical alias를 추가한다.
-        #
-        # 기존 ContractDomainValidator는 principal /
-        # repaymentDate를 계속 읽기 때문에 원래 key도 보존한다.
-        if (
-            contract.get(
-                "principalAmount"
-            )
-            is None
-        ):
-            contract[
-                "principalAmount"
-            ] = contract.get(
-                "principal"
-            )
+    /understand에서 받은 쟁점을 그대로 써서 ① 쟁점 분석을 다시 하지 않고,
+    ② 검색 → ③ 순위 → ④ 생성 → ⑤ 검증을 한다.
+    이벤트는 /clause-suggestions/stream과 같다. (progress는 retrieval부터)
+    """
 
-        if (
-            contract.get(
-                "maturityDate"
-            )
-            is None
-        ):
-            contract[
-                "maturityDate"
-            ] = contract.get(
-                "repaymentDate"
-            )
+    clause_agent = (
+        request.app.state
+        .clause_agent
+    )
 
-        # 후보 수 / 최종 근거 수는
-        # ContractClauseAgent 내부 정책을 사용한다.
+    contract = to_agent_contract(
+        body.contract.model_dump()
+    )
 
-        return (
-            clause_agent.suggest_clause(
-                contract=contract,
-                message=(
-                    body.message
-                ),
-            )
-        )
+    return StreamingResponse(
+        stream_clause_events(
+            clause_agent=clause_agent,
+            contract=contract,
+            message=body.message,
+            agent_options={
+                "issues": body.issues,
+                "slots": body.slots,
+                "questions": body.questions,
+                "answers": body.answers,
+                "references": body.references,
+                "demo": body.demo,
+            },
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=str(exc),
-        ) from exc
-
-    except Exception as exc:
-        print(
-            "[Clause Agent Error]",
-            repr(exc),
-        )
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "AI 특약 생성 중 "
-                "오류가 발생했습니다."
-            ),
-        ) from exc
