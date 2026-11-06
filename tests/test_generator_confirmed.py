@@ -100,3 +100,11 @@ def test_sentence_starting_with_je_is_not_removed():
 
     assert result["suggestedClause"] == "제한 조건 없이 언제든지 상환할 수 있다."
 
+
+def test_system_prompt_asks_slot_names_to_show_value_kind():
+    prompt = ClauseGenerator._build_system_prompt(None)
+
+    assert '비율: "~율"' in prompt
+    assert '금액: "~금액"' in prompt
+    assert "목록에 있는 이름은 그 이름 그대로 쓴다" in prompt
+
