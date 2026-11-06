@@ -350,6 +350,7 @@ def understand_contract_clause(
         return clause_agent.understand(
             contract=contract,
             message=body.message,
+            demo=body.demo,
         )
 
     except ValueError as exc:
@@ -436,6 +437,7 @@ def prepare_contract_clause(
             ),
             message=body.message,
             issues=body.issues,
+            demo=body.demo,
         )
 
     except Exception as exc:
@@ -567,6 +569,7 @@ def write_contract_clause_stream(
                 "questions": body.questions,
                 "answers": body.answers,
                 "references": body.references,
+                "demo": body.demo,
             },
         ),
         media_type="text/event-stream",

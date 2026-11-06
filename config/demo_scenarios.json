@@ -1,0 +1,79 @@
+{
+  "scenarios": [
+    {
+      "question": "3개월 연속 연체하면 남은 원금을 전부 갚게 하고 싶어요.",
+      "timing": { "understand": 3.0, "references": 0.6, "firstText": 3.2, "stream": 3.5, "validation": 0.8 },
+      "issues": [
+        { "type": "DEFAULT", "reason": "연체 판단 기준이 필요합니다.", "searchTerms": ["연체", "이행지체"] },
+        { "type": "ACCELERATION", "reason": "남은 원금을 한꺼번에 갚게 하는 조건입니다.", "searchTerms": ["기한의 이익 상실", "일시 변제"] }
+      ],
+      "understanding": {
+        "summary": "3개월 연속 연체하면 남은 원금을 전부 갚도록 하는 특약을 원하시는 걸로 이해했어요.",
+        "slots": [
+          { "name": "연체 조건", "kind": "MONTHS", "value": "3개월", "from": null, "field": null,
+            "condition": "3개월 연속 연체 시", "inMessage": true, "confirmed": false }
+        ]
+      },
+      "title": "연속 연체 시 기한의 이익 상실",
+      "summary": "3개월 연속 연체하면 미리 알린 뒤 7일이 지나 남은 원금 전액을 갚도록 정합니다.",
+      "clause": "채무자가 각 회차 상환기일까지 해당 회차 상환금을 전액 지급하지 않은 경우 그 회차를 연체로 본다. 일부 금액만 지급한 경우에도 해당 회차는 연체로 보며, 연체 횟수는 회차별로 산정한다. 연속된 3회차(3개월)의 상환금이 모두 연체된 경우, 채권자는 서면 또는 전자적 방법으로 채무자에게 알린다. 채무자는 그 통지를 받은 날부터 7일이 지난 후 기한의 이익을 상실하고, 남은 원금 전액을 즉시 변제한다.",
+      "warnings": [],
+      "unresolvedDecisions": []
+    },
+    {
+      "question": "만기 전에 원금을 먼저 갚을 수 있게 하고 싶어요.",
+      "timing": { "understand": 2.5, "references": 0.5, "firstText": 3.0, "stream": 2.5, "validation": 0.5 },
+      "issues": [
+        { "type": "EARLY_REPAYMENT", "reason": "만기 전 변제를 허용하는 조건입니다.", "searchTerms": ["중도상환", "변제기 전 변제"] }
+      ],
+      "understanding": {
+        "summary": "만기 전에 원금을 먼저 갚을 수 있도록 하는 조항을 원하시는 걸로 이해했어요.",
+        "slots": []
+      },
+      "title": "만기 전 중도상환",
+      "summary": "만기 전에도 원금 전액을 수수료 없이 갚을 수 있도록 정합니다.",
+      "clause": "채무자는 만기일 전에도 원금 전액을 변제할 수 있으며, 중도상환수수료는 부과하지 않는다. 채무자는 중도상환 전에 서면 또는 전자적 방법으로 채권자에게 알리고, 중도상환일까지 경과한 날짜를 기준으로 계산한 이자와 남은 원금 전액을 변제한다.",
+      "warnings": [],
+      "unresolvedDecisions": []
+    },
+    {
+      "question": "연체했을 때 위약금을 정하고 싶어요.",
+      "timing": { "understand": 2.8, "references": 0.6, "firstText": 3.0, "stream": 2.0, "validation": 0.8 },
+      "issues": [
+        { "type": "PENALTY", "reason": "연체 시 위약금을 정하는 조건입니다.", "searchTerms": ["위약금", "손해배상액의 예정"] }
+      ],
+      "understanding": {
+        "summary": "연체했을 때 위약금을 내도록 하는 조항을 원하시는 걸로 이해했어요.",
+        "slots": []
+      },
+      "title": "연체 시 위약금",
+      "summary": "상환기일까지 갚지 않으면 위약금을 한 번 내도록 하고, 금액은 직접 정하도록 남깁니다.",
+      "clause": "채무자가 상환기일까지 상환금을 지급하지 않아 연체한 경우, 채무자는 채권자에게 위약금으로 [입력 필요: 위약금 금액]을 한 번 지급한다. 이 경우 연체이자는 따로 청구하지 않는다.",
+      "warnings": [
+        "민법 제398조에 따라 위약금 약정은 손해배상액의 예정으로 추정되며, 예정액이 부당히 과다한 경우 법원이 감액할 수 있습니다."
+      ],
+      "unresolvedDecisions": [
+        { "name": "위약금 금액", "reason": "위약금으로 받을 금액이 정해지지 않았습니다." }
+      ]
+    },
+    {
+      "question": "채무자 소유 자동차를 담보로 잡고 싶어요.",
+      "timing": { "understand": 2.5, "references": 0.5, "firstText": 3.0, "stream": 2.5, "validation": 0.5 },
+      "issues": [
+        { "type": "COLLATERAL", "reason": "자동차를 담보로 제공하는 조건입니다.", "searchTerms": ["담보", "자동차 저당"] }
+      ],
+      "understanding": {
+        "summary": "채무자 소유 자동차를 대여금의 담보로 잡는 조항을 원하시는 걸로 이해했어요.",
+        "slots": [
+          { "name": "담보물", "kind": "CHOICE", "value": "채무자 소유 자동차", "from": null, "field": null,
+            "condition": null, "inMessage": true, "confirmed": false }
+        ]
+      },
+      "title": "자동차 담보 제공",
+      "summary": "채무 전부를 위해 채무자 소유 자동차를 담보로 제공하고, 갚지 못하면 처분해 충당하도록 정합니다.",
+      "clause": "채무자는 이 계약에 따른 채무 전부를 담보하기 위하여 채무자 소유 자동차를 계약 체결일에 담보로 제공한다. 채무자가 변제기까지 채무를 변제하지 않으면, 채권자는 담보 자동차를 처분하고 그 처분대금을 이 계약에 따른 채무의 변제에 충당한다.",
+      "warnings": [],
+      "unresolvedDecisions": []
+    }
+  ]
+}
