@@ -595,7 +595,7 @@ def test_prepare_endpoint_returns_references():
     from sai_rag.api import main
 
     class PrepareAgent(FakeAgent):
-        def prepare_references(self, *, contract, message, issues):
+        def prepare_references(self, *, contract, message, issues, demo=False):
             self.received = (message, issues)
             return [{"document_id": "민법-398"}]
 
