@@ -23,6 +23,7 @@ from sai_rag.agent.chat_router import (
 
 from sai_rag.agent.decision_rules import (
     writing_guide,
+    DIRECT_INPUT_ANSWER,
 )
 
 from sai_rag.agent.openai_options import (
@@ -778,8 +779,7 @@ unresolvedDecisions에는 suggestedClause에 실제로 존재하는
             if answer is None:
                 continue
 
-            if answer == UNKNOWN_ANSWER:
-                lines.append(
+            if answer in (UNKNOWN_ANSWER, DIRECT_INPUT_ANSWER):                lines.append(
                     f"- {question['text']} → 아직 정하지 않음. "
                     "조항에 [입력 필요: …] 칸으로 남긴다."
                 )
