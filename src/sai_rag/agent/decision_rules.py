@@ -14,14 +14,19 @@ legal_ref가 있고 verified=False면 조문 확인이 아직 필요하다.
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass
+
+from sai_rag.agent.intent_value_normalizer import find_amounts, find_percents
 
 
 CONTRACT = "CONTRACT"
 DEFAULT = "DEFAULT"
 QUESTION = "QUESTION"
 REQUEST = "REQUEST"
-
+DIRECT_INPUT_ANSWER = "직접 입력할게요"  # 사용자가 값을 직접 쓰겠다는 답
+CLAUSE_SPLIT_PATTERN = re.compile(r"[,.\n]|(?:이고|이며|인데)\s+")  # 문장을 구간으로 나눈다
 
 # 이해 확인 때 기본값을 한 번에 보여 주는 질문. 생성기(A-3)도 이 이름으로 답을 찾는다.
 DEFAULTS_QUESTION_ID = "confirm_defaults"
@@ -43,6 +48,8 @@ class Decision:
     policy: bool = False
     legal_ref: str = ""
     verified: bool = False
+    value_name: str = ""  # 금액이 없으면 이 이름으로 빈칸을 남긴다
+    value_keyword: str = ""  # 이 말이 있는 구간의 금액만 인정한다
 
     @property
     def has_default(self) -> bool:
@@ -154,7 +161,7 @@ DECISIONS: dict[str, tuple[Decision, ...]] = {
         ),
     ),
     "PENALTY": (
-        Decision(name="위약금 산정 기준", kind=REQUEST),
+        Decision(name="위약금 산정 기준", kind=REQUEST, value_name="위약금 금액", value_keyword="위약금"),
         Decision(name="위약금 적용 대상 금액", kind=REQUEST),
         Decision(
             name="위약금 발생 횟수",
@@ -292,6 +299,37 @@ def _answer_for(
     return None
 
 
+def _has_value(text: str) -> bool:
+    return bool(find_amounts(text) or find_percents(text))
+
+
+def _mentions_value(
+    keyword: str,
+    message: str,
+    questions: list[dict],
+    answers: dict[str, str],
+) -> bool:
+    """요청이나 이 항목에 대한 답에 그 항목의 금액이 있는지 본다."""
+
+    texts = [message, *answers.values()]
+
+    for text in texts:
+        for part in CLAUSE_SPLIT_PATTERN.split(text):
+            if keyword in part and _has_value(part):
+                return True
+
+    # "얼마로 할까요?"에 "30만원"처럼 숫자만 답한 경우
+    for question in questions:
+        answer = answers.get(question.get("id"))
+
+        if answer and keyword in (question.get("text") or "") and _has_value(answer):
+            return True
+
+    return False
+
+
+
+
 def writing_guide(
     *,
     issue_types: list[str],
@@ -317,8 +355,13 @@ def writing_guide(
             continue
 
         if decision.kind == REQUEST:
-            # 사용자가 요청에서 말한 것이다. 이해 확인에서 확정했으므로 [입력 필요] 후보가 아니다.
-            guide["request"].append(decision.name)
+            # 금액이 필요한 항목인데 요청과 답 어디에도 금액이 없으면 빈칸으로 남긴다.
+            if decision.value_name and not _mentions_value(
+                decision.value_keyword, message, questions, answers
+            ):
+                guide["open"].append(decision.value_name)
+            else:
+                guide["request"].append(decision.name)
             continue
 
         if decision.kind == DEFAULT:
@@ -330,8 +373,7 @@ def writing_guide(
         # QUESTION
         answer = _answer_for(decision, message, questions, answers)
 
-        if answer == unknown_answer:
-            guide["open"].append(decision.name)
+        if answer in (unknown_answer, DIRECT_INPUT_ANSWER):            guide["open"].append(decision.name)
         elif answer is not None:
             continue  # 확정 조건(답)이나 요청으로 이미 정해졌다.
         elif decision.has_default and not defaults_rejected:
