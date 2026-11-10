@@ -118,3 +118,37 @@ def test_request_items_are_never_open():
     assert "기한의 이익 상실 또는 일시변제 발생 요건" in result["request"]
     assert "기한의 이익 상실 또는 일시변제 발생 요건" not in result["open"]
 
+
+def test_penalty_amount_stays_open_without_amount():
+    result = guide(["PENALTY"], message="연체했을 때 위약금을 정하고 싶어요.")
+
+    assert "위약금 금액" in result["open"]
+
+
+def test_penalty_amount_is_not_open_with_amount():
+    result = guide(["PENALTY"], message="연체하면 위약금 50만원을 내게 하고 싶어요.")
+
+    assert "위약금 금액" not in result["open"]
+
+
+def test_penalty_amount_ignores_principal_amount():
+    result = guide(["PENALTY"], message="원금은 300만 원이고, 연체하면 위약금을 받고 싶어요")
+
+    assert "위약금 금액" in result["open"]
+
+
+def test_penalty_amount_ignores_other_answer():
+    result = guide(
+        ["PENALTY"],
+        message="연체하면 위약금을 받고 싶어요",
+        answers={"late_rate": "5%"},
+    )
+
+    assert "위약금 금액" in result["open"]
+
+
+def test_penalty_amount_reads_korean_amount():
+    result = guide(["PENALTY"], message="위약금을 삼십만 원으로 정해 주세요")
+
+    assert "위약금 금액" not in result["open"]
+
